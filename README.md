@@ -1,6 +1,6 @@
 # Pfizer News Monitor
 
-This project scans the Pfizer Newsroom on GitHub Actions at Beijing time on weekdays at 09:00, 12:00, and 17:00:
+This project scans the Pfizer Newsroom on GitHub Actions at Beijing time on weekdays at 09:07, 12:07, and 17:07:
 
 https://www.pfizer.com/newsroom
 
