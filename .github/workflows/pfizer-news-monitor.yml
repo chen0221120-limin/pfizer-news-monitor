@@ -2,8 +2,8 @@ name: Pfizer News Monitor
 
 on:
   schedule:
-    # Beijing time: weekdays 09:00, 12:00, 17:00.
-    - cron: "0 1,4,9 * * 1-5"
+    # Beijing time: weekdays 09:07, 12:07, 17:07.
+    - cron: "7 1,4,9 * * 1-5"
   workflow_dispatch:
 
 permissions:
