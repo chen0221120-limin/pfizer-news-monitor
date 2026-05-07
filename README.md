@@ -42,10 +42,12 @@ news-monitor-report
 The report includes:
 
 - scan time
+- cutoff date (`2026-04-01`)
 - scan result summary
-- source site, translated Chinese title, original title, and article URL when new items are found
+- every monitored item published on or after `2026-04-01`
+- source site, publication date, Chinese title (or original title if translation is skipped), original title, and article URL
 
-If no new items are detected, the document is still generated and explicitly states that no new updates were found.
+The report is no longer limited to "new since last scan". Each scan rebuilds the report from the live page data and includes all qualifying items published on or after `2026-04-01`.
 
 ## State
 
@@ -55,13 +57,13 @@ The monitor stores scan state in:
 .state/pfizer_news_seen.json
 ```
 
-This file now keeps per-site seen URLs and the last completed Beijing time slot.
+This file now keeps the last completed Beijing time slot, the latest scan time, and the active report cutoff date.
 
 ## Files
 
 - `.github/workflows/pfizer-news-monitor.yml`: scheduled GitHub Actions workflow
-- `scripts/pfizer_news_monitor.py`: fetches monitored pages, detects new items, translates titles, and generates the Word document
-- `.state/pfizer_news_seen.json`: stores seen URLs and slot state
+- `scripts/pfizer_news_monitor.py`: fetches monitored pages, filters items published on or after `2026-04-01`, translates titles when practical, and generates the Word document
+- `.state/pfizer_news_seen.json`: stores slot state for schedule deduplication
 
 ## Manual Test
 
@@ -73,8 +75,8 @@ To test locally without generating a Word document or changing the saved state:
 python scripts/pfizer_news_monitor.py --dry-run
 ```
 
-To allow the first run to generate a Word document for the current set of items:
+To skip online translation during a local test:
 
 ```bash
-REPORT_ON_FIRST_RUN=true python scripts/pfizer_news_monitor.py
+DISABLE_TRANSLATION=true python scripts/pfizer_news_monitor.py --dry-run
 ```
