@@ -9,13 +9,21 @@ This project scans the following news pages on GitHub Actions:
 
 ## Schedule
 
-GitHub Actions runs every 5 minutes during the UTC hours that correspond to Beijing weekday scan slots:
+GitHub Actions runs every 5 minutes on weekdays.
+
+The script only performs a real scan for these Beijing slots:
 
 - Beijing `09:00`
 - Beijing `12:00`
 - Beijing `17:00`
 
-The Python script only allows one real scan per Beijing slot. This makes the schedule more reliable than relying on one exact minute trigger.
+Each slot has a catch-up window of up to 2 hours:
+
+- `09:00` slot can still be completed between `09:00` and `10:59`
+- `12:00` slot can still be completed between `12:00` and `13:59`
+- `17:00` slot can still be completed between `17:00` and `18:59`
+
+The Python script still allows only one real scan per slot. This makes the schedule more reliable than relying on one exact minute trigger.
 
 ## Output
 
