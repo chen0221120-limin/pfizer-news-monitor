@@ -19,7 +19,7 @@ The Python script only allows one real scan per Beijing slot. This makes the sch
 
 ## Output
 
-When new items are found since the previous successful scan, the workflow generates a local Microsoft Word document in:
+For every successful scan, the workflow generates a local Microsoft Word document in:
 
 ```text
 reports/news-monitor-YYYYMMDD-HHMMSS.docx
@@ -34,10 +34,10 @@ news-monitor-report
 The report includes:
 
 - scan time
-- source site
-- translated Chinese title
-- original title
-- article URL
+- scan result summary
+- source site, translated Chinese title, original title, and article URL when new items are found
+
+If no new items are detected, the document is still generated and explicitly states that no new updates were found.
 
 ## State
 
