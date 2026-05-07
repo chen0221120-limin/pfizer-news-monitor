@@ -40,7 +40,8 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git fetch origin "${GITHUB_REF_NAME}"
           git add .state/pfizer_news_seen.json
           git diff --cached --quiet || git commit -m "Update Pfizer news monitor state"
+          git pull --rebase --autostash origin "${GITHUB_REF_NAME}"
           git push
