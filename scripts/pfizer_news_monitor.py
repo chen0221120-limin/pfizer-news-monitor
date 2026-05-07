@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Monitor selected pharma newsroom pages and generate a Word report for new items."""
+"""Monitor selected pharma newsroom pages and generate a Word report for each scan."""
 
 from __future__ import annotations
 
@@ -15,7 +15,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Iterable
 from urllib.error import URLError
 from urllib.parse import quote, urljoin, urlparse
 from urllib.request import Request, urlopen
@@ -265,7 +264,6 @@ def load_state(path: Path) -> tuple[bool, dict]:
     if not isinstance(seen_by_source, dict):
         seen_by_source = {}
 
-    # Backward compatibility with the older Pfizer-only state structure.
     legacy_pfizer_urls = raw_state.get("seen_urls", [])
     if legacy_pfizer_urls and "Pfizer" not in seen_by_source:
         seen_by_source["Pfizer"] = legacy_pfizer_urls
@@ -327,13 +325,21 @@ def should_force_scan() -> bool:
     return os.getenv("FORCE_SCAN", "").lower() in {"1", "true", "yes"}
 
 
-def build_report_text(items: list[NewsItem], translated_titles: dict[str, str], label: str) -> str:
+def build_report_text(
+    items: list[NewsItem],
+    translated_titles: dict[str, str],
+    label: str,
+    summary_text: str,
+) -> str:
     lines = [
         f"扫描时间：{label}",
         "",
-        f"本次扫描发现 {len(items)} 条新动态：",
-        "",
+        f"扫描结果：{summary_text}",
     ]
+    if not items:
+        return "\n".join(lines).strip() + "\n"
+
+    lines.append("")
     for index, item in enumerate(items, start=1):
         lines.append(f"{index}. 来源：{item.source}")
         lines.append(f"   中文标题：{translated_titles[item.url]}")
@@ -367,11 +373,16 @@ def hyperlink_paragraph_xml(text: str, rel_id: str) -> str:
     )
 
 
-def build_document_xml(items: list[NewsItem], translated_titles: dict[str, str], label: str) -> str:
+def build_document_xml(
+    items: list[NewsItem],
+    translated_titles: dict[str, str],
+    label: str,
+    summary_text: str,
+) -> str:
     body_parts = [
         paragraph_xml("企业新闻监测更新", "Title"),
         paragraph_xml(f"扫描时间：{label}", "Subtitle"),
-        paragraph_xml(f"本次扫描发现 {len(items)} 条新动态。"),
+        paragraph_xml(f"扫描结果：{summary_text}"),
     ]
     for index, item in enumerate(items, start=1):
         body_parts.extend(
@@ -462,6 +473,7 @@ def create_word_document(
     items: list[NewsItem],
     translated_titles: dict[str, str],
     label: str,
+    summary_text: str,
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     content_types = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -480,9 +492,29 @@ def create_word_document(
     with zipfile.ZipFile(output_path, "w", compression=zipfile.ZIP_DEFLATED) as docx:
         docx.writestr("[Content_Types].xml", content_types)
         docx.writestr("_rels/.rels", package_rels)
-        docx.writestr("word/document.xml", build_document_xml(items, translated_titles, label))
+        docx.writestr(
+            "word/document.xml",
+            build_document_xml(items, translated_titles, label, summary_text),
+        )
         docx.writestr("word/_rels/document.xml.rels", build_relationships_xml(items))
         docx.writestr("word/styles.xml", styles_xml())
+
+
+def create_report(
+    output_dir: Path,
+    items: list[NewsItem],
+    translated_titles: dict[str, str],
+    label: str,
+    summary_text: str,
+    dry_run: bool,
+) -> None:
+    report_text = build_report_text(items, translated_titles, label, summary_text)
+    filename_label = bjt_now().strftime("%Y%m%d-%H%M%S")
+    output_path = output_dir / f"{REPORT_PREFIX}-{filename_label}.docx"
+    print(report_text)
+    if not dry_run:
+        create_word_document(output_path, items, translated_titles, label, summary_text)
+        print(f"Word document generated: {output_path}")
 
 
 def main() -> int:
@@ -550,9 +582,12 @@ def main() -> int:
         merged_seen_by_source.setdefault(source, set()).update(urls)
 
     effective_slot_key = slot_key or state.get("last_slot_key")
+    label = scan_time_label()
 
     if not state_exists and not first_run_should_report:
-        print("State file does not exist. Initializing baseline without generating a Word document.")
+        summary_text = "首次扫描已建立基线，未发现需要通知的新更新。"
+        print("State file does not exist. Initializing baseline and generating a report.")
+        create_report(args.output_dir, [], {}, label, summary_text, args.dry_run)
         if not args.dry_run:
             save_state(args.state, merged_seen_by_source, effective_slot_key)
         return 0
@@ -564,23 +599,25 @@ def main() -> int:
         )
 
     if not new_items:
+        summary_text = "未发现新的更新。"
         print("No new items found across the monitored sites.")
+        create_report(args.output_dir, [], {}, label, summary_text, args.dry_run)
         if not args.dry_run:
             save_state(args.state, merged_seen_by_source, effective_slot_key)
         return 0
 
-    label = scan_time_label()
     translated_titles = {item.url: translate_title(item.title) for item in new_items}
-    report_text = build_report_text(new_items, translated_titles, label)
-    filename_label = bjt_now().strftime("%Y%m%d-%H%M%S")
-    output_path = args.output_dir / f"{REPORT_PREFIX}-{filename_label}.docx"
-
+    summary_text = f"发现 {len(new_items)} 条新的更新。"
     print(f"Found {len(new_items)} new item(s).")
-    print(report_text)
-
+    create_report(
+        args.output_dir,
+        new_items,
+        translated_titles,
+        label,
+        summary_text,
+        args.dry_run,
+    )
     if not args.dry_run:
-        create_word_document(output_path, new_items, translated_titles, label)
-        print(f"Word document generated: {output_path}")
         save_state(args.state, merged_seen_by_source, effective_slot_key)
 
     return 0
