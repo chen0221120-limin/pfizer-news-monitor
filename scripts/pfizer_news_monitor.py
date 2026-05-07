@@ -12,7 +12,7 @@ import re
 import time
 import zipfile
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.error import URLError
@@ -31,14 +31,10 @@ INNOVENT_NEWS_URL_TEMPLATE = "https://www.innoventbio.com/#/news/{id}"
 STATE_PATH = Path(".state/pfizer_news_seen.json")
 REPORT_DIR = Path("reports")
 REPORT_PREFIX = "news-monitor"
+REPORT_CUTOFF_DATE = date(2026, 4, 1)
 
-PFIZER_MARKERS = (
-    "/news/press-release/",
-    "/news/articles/",
-    "/news/announcements/",
-    "/news/updates-and-statements/",
-    "/news/partnering-news/",
-)
+PFIZER_PRESS_RELEASE_MARKER = "/news/press-release/"
+PFIZER_MAX_PAGES = 12
 ASTRAZENECA_MARKER = "/media-centre/press-releases/"
 ROCHE_RELEASE_PREFIX = "https://www.roche.com/media/releases/"
 ROCHE_MAX_ITEMS = 200
@@ -51,35 +47,7 @@ class NewsItem:
     source: str
     title: str
     url: str
-
-
-class LinkCollector(HTMLParser):
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self._active_href: str | None = None
-        self._active_text: list[str] = []
-        self.links: list[tuple[str, str]] = []
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag.lower() != "a":
-            return
-        href = dict(attrs).get("href")
-        if href:
-            self._active_href = href
-            self._active_text = []
-
-    def handle_data(self, data: str) -> None:
-        if self._active_href is not None:
-            self._active_text.append(data)
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag.lower() != "a" or self._active_href is None:
-            return
-        text = " ".join("".join(self._active_text).split())
-        if text:
-            self.links.append((self._active_href, html.unescape(text)))
-        self._active_href = None
-        self._active_text = []
+    published_on: date
 
 
 def bjt_now() -> datetime:
@@ -143,53 +111,62 @@ def clean_title(title: str) -> str:
     return cleaned.strip(" -|")
 
 
-def is_pfizer_article(url: str) -> bool:
+def is_pfizer_press_release(url: str) -> bool:
     parsed = urlparse(url)
     if parsed.netloc and parsed.netloc != "www.pfizer.com":
         return False
-    return any(marker in parsed.path for marker in PFIZER_MARKERS)
+    return PFIZER_PRESS_RELEASE_MARKER in parsed.path
 
 
-def fetch_pfizer_items() -> list[NewsItem]:
-    parser = LinkCollector()
-    parser.feed(fetch_text(PFIZER_URL))
+def parse_date_text(value: str | None) -> date | None:
+    if not value:
+        return None
 
-    seen_urls: set[str] = set()
-    items: list[NewsItem] = []
-    for href, title in parser.links:
-        url = normalize_url(PFIZER_URL, href)
-        if not is_pfizer_article(url) or url in seen_urls:
-            continue
-        seen_urls.add(url)
-        items.append(NewsItem(source="Pfizer", title=clean_title(title), url=url))
-    if not items:
-        raise RuntimeError("No Pfizer newsroom article links were found.")
-    return items
+    text = " ".join(str(value).replace("\xa0", " ").split()).strip(" ,.-")
+    if not text:
+        return None
 
+    text = re.sub(r"(?i)^published\s+", "", text)
 
-def fetch_astrazeneca_items() -> list[NewsItem]:
-    parser = LinkCollector()
-    parser.feed(fetch_text(ASTRAZENECA_URL))
+    iso_match = re.search(r"(?<!\d)(\d{4}-\d{2}-\d{2})(?!\d)", text)
+    if iso_match:
+        try:
+            return datetime.strptime(iso_match.group(1), "%Y-%m-%d").date()
+        except ValueError:
+            pass
 
-    seen_urls: set[str] = set()
-    items: list[NewsItem] = []
-    for href, title in parser.links:
-        url = normalize_url(ASTRAZENECA_URL, href)
-        parsed = urlparse(url)
-        if parsed.netloc != "www.astrazeneca.com":
-            continue
-        if ASTRAZENECA_MARKER not in parsed.path or url in seen_urls:
-            continue
-        seen_urls.add(url)
-        items.append(NewsItem(source="AstraZeneca", title=clean_title(title), url=url))
-    if not items:
-        raise RuntimeError("No AstraZeneca press release links were found.")
-    return items
+    dotted_match = re.search(r"(?<!\d)(\d{2}\.\d{2}\.\d{4})(?!\d)", text)
+    if dotted_match:
+        try:
+            return datetime.strptime(dotted_match.group(1), "%m.%d.%Y").date()
+        except ValueError:
+            pass
 
+    month_match = re.search(
+        r"(?<!\d)(\d{1,2}\s+[A-Za-z]+\s+\d{4})(?!\d)",
+        text,
+    )
+    if month_match:
+        try:
+            return datetime.strptime(month_match.group(1), "%d %B %Y").date()
+        except ValueError:
+            pass
 
-def roche_sort_key(url: str) -> tuple[str, str]:
-    match = re.search(r"(\d{4}-\d{2}-\d{2})", url)
-    return (match.group(1) if match else "", url)
+    slash_match = re.search(r"(?<!\d)(\d{4}/\d{2}/\d{2})(?!\d)", text)
+    if slash_match:
+        try:
+            return datetime.strptime(slash_match.group(1), "%Y/%m/%d").date()
+        except ValueError:
+            pass
+
+    compact_match = re.search(r"(?<!\d)(\d{8})(?!\d)", text)
+    if compact_match:
+        try:
+            return datetime.strptime(compact_match.group(1), "%Y%m%d").date()
+        except ValueError:
+            pass
+
+    return None
 
 
 def extract_title_from_page(html_text: str, fallback_url: str) -> str:
@@ -214,6 +191,163 @@ def extract_title_from_page(html_text: str, fallback_url: str) -> str:
     return clean_title(slug.replace("-", " "))
 
 
+def extract_date_from_page(html_text: str) -> date | None:
+    patterns = (
+        r'<meta[^>]+property=["\']article:published_time["\'][^>]+content=["\']([^"\']+)["\']',
+        r'<meta[^>]+name=["\']publishdate["\'][^>]+content=["\']([^"\']+)["\']',
+        r'<meta[^>]+name=["\']date["\'][^>]+content=["\']([^"\']+)["\']',
+        r'(?i)published[^<]{0,40}(\d{1,2}\s+[A-Za-z]+\s+\d{4})',
+        r'(\d{2}\.\d{2}\.\d{4})',
+        r'(\d{4}-\d{2}-\d{2})',
+    )
+    for pattern in patterns:
+        match = re.search(pattern, html_text, flags=re.IGNORECASE | re.DOTALL)
+        if not match:
+            continue
+        parsed = parse_date_text(match.group(1))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+class PfizerPressReleaseParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._current_href: str | None = None
+        self._current_text: list[str] = []
+        self._current_date: date | None = None
+        self._last_seen_date: date | None = None
+        self._seen_urls: set[str] = set()
+        self.items: list[NewsItem] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() != "a":
+            return
+        href = dict(attrs).get("href")
+        if href:
+            self._current_href = href
+            self._current_text = []
+            self._current_date = self._last_seen_date
+
+    def handle_data(self, data: str) -> None:
+        parsed = parse_date_text(data)
+        if parsed is not None:
+            self._last_seen_date = parsed
+            if self._current_href is None:
+                self._current_date = parsed
+        if self._current_href is not None:
+            self._current_text.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() != "a" or self._current_href is None:
+            return
+        title = clean_title("".join(self._current_text))
+        url = normalize_url(PFIZER_URL, self._current_href)
+        published_on = self._current_date
+        if title and published_on and is_pfizer_press_release(url) and url not in self._seen_urls:
+            self._seen_urls.add(url)
+            self.items.append(
+                NewsItem(
+                    source="Pfizer",
+                    title=title,
+                    url=url,
+                    published_on=published_on,
+                )
+            )
+        self._current_href = None
+        self._current_text = []
+        self._current_date = None
+
+
+def fetch_pfizer_items() -> list[NewsItem]:
+    items: list[NewsItem] = []
+    seen_urls: set[str] = set()
+    reached_cutoff = False
+
+    for page_number in range(PFIZER_MAX_PAGES):
+        page_url = PFIZER_URL if page_number == 0 else f"{PFIZER_URL}?page={page_number}"
+        parser = PfizerPressReleaseParser()
+        parser.feed(fetch_text(page_url))
+        page_items = [item for item in parser.items if item.url not in seen_urls]
+        if not page_items:
+            break
+
+        for item in page_items:
+            seen_urls.add(item.url)
+            if item.published_on >= REPORT_CUTOFF_DATE:
+                items.append(item)
+            else:
+                reached_cutoff = True
+
+        if reached_cutoff:
+            break
+
+    return items
+
+
+class AstraZenecaLatestPressReleaseParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._current_href: str | None = None
+        self._current_text: list[str] = []
+        self._seen_urls: set[str] = set()
+        self.items: list[NewsItem] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() != "a":
+            return
+        href = dict(attrs).get("href")
+        if href:
+            self._current_href = href
+            self._current_text = []
+
+    def handle_data(self, data: str) -> None:
+        if self._current_href is not None:
+            self._current_text.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() != "a" or self._current_href is None:
+            return
+
+        url = normalize_url(ASTRAZENECA_URL, self._current_href)
+        parsed = urlparse(url)
+        text = clean_title("".join(self._current_text))
+        date_match = re.search(r"(.+?)\s+(\d{1,2}\s+[A-Za-z]+\s+\d{4})$", text)
+        if (
+            parsed.netloc == "www.astrazeneca.com"
+            and ASTRAZENECA_MARKER in parsed.path
+            and url not in self._seen_urls
+            and date_match
+        ):
+            published_on = parse_date_text(date_match.group(2))
+            title = clean_title(date_match.group(1))
+            if published_on is not None and title:
+                self._seen_urls.add(url)
+                self.items.append(
+                    NewsItem(
+                        source="AstraZeneca",
+                        title=title,
+                        url=url,
+                        published_on=published_on,
+                    )
+                )
+
+        self._current_href = None
+        self._current_text = []
+
+
+def fetch_astrazeneca_items() -> list[NewsItem]:
+    parser = AstraZenecaLatestPressReleaseParser()
+    parser.feed(fetch_text(ASTRAZENECA_URL))
+    items = [item for item in parser.items if item.published_on >= REPORT_CUTOFF_DATE]
+    return items
+
+
+def roche_sort_key(url: str) -> tuple[str, str]:
+    match = re.search(r"(\d{4}-\d{2}-\d{2})", url)
+    return (match.group(1) if match else "", url)
+
+
 def fetch_roche_urls() -> list[str]:
     xml_text = fetch_text(ROCHE_SITEMAP_URL)
     url_matches = re.findall(r"https://www\.roche\.com/media/releases/[^<]+", xml_text)
@@ -234,10 +368,68 @@ def fetch_roche_urls() -> list[str]:
     return urls
 
 
-def fetch_roche_item(url: str) -> NewsItem:
-    page_html = fetch_text(url)
-    title = extract_title_from_page(page_html, url)
-    return NewsItem(source="Roche", title=title, url=url)
+def fetch_roche_items() -> list[NewsItem]:
+    items: list[NewsItem] = []
+    for url in fetch_roche_urls():
+        published_on = parse_date_text(url)
+        if published_on is None or published_on < REPORT_CUTOFF_DATE:
+            continue
+        page_html = fetch_text(url)
+        title = extract_title_from_page(page_html, url)
+        items.append(
+            NewsItem(
+                source="Roche",
+                title=title,
+                url=url,
+                published_on=published_on,
+            )
+        )
+    return items
+
+
+def candidate_date_values(entry: object) -> list[str]:
+    candidates: list[str] = []
+    if isinstance(entry, dict):
+        preferred_keys = (
+            "publishTime",
+            "publishDate",
+            "publishedAt",
+            "published_at",
+            "releaseDate",
+            "release_date",
+            "createTime",
+            "createdAt",
+            "created_at",
+            "date",
+            "newsDate",
+            "showTime",
+            "time",
+        )
+        for key in preferred_keys:
+            value = entry.get(key)
+            if value not in (None, ""):
+                candidates.append(str(value))
+        for value in entry.values():
+            candidates.extend(candidate_date_values(value))
+    elif isinstance(entry, list):
+        for value in entry:
+            candidates.extend(candidate_date_values(value))
+    elif isinstance(entry, (str, int, float)):
+        candidates.append(str(entry))
+    return candidates
+
+
+def extract_innovent_date(entry: dict, detail_url: str) -> date | None:
+    for candidate in candidate_date_values(entry):
+        parsed = parse_date_text(candidate)
+        if parsed is not None:
+            return parsed
+
+    try:
+        page_html = fetch_text(detail_url)
+    except (OSError, URLError):
+        return None
+    return extract_date_from_page(page_html)
 
 
 def fetch_innovent_items() -> list[NewsItem]:
@@ -245,53 +437,47 @@ def fetch_innovent_items() -> list[NewsItem]:
     raw_items = payload.get("data", [])
     items: list[NewsItem] = []
     for entry in raw_items:
+        if not isinstance(entry, dict):
+            continue
         news_id = entry.get("id")
         title = clean_title(str(entry.get("title", "")).strip())
         if not news_id or not title:
             continue
+
         url = INNOVENT_NEWS_URL_TEMPLATE.format(id=news_id)
-        items.append(NewsItem(source="Innovent", title=title, url=url))
-    if not items:
-        raise RuntimeError("No Innovent news items were returned by the API.")
+        published_on = extract_innovent_date(entry, url)
+        if published_on is None or published_on < REPORT_CUTOFF_DATE:
+            continue
+
+        items.append(
+            NewsItem(
+                source="Innovent",
+                title=title,
+                url=url,
+                published_on=published_on,
+            )
+        )
+
     return items
 
 
 def load_state(path: Path) -> tuple[bool, dict]:
     if not path.exists():
-        return False, {"seen_by_source": {}, "last_slot_key": None}
+        return False, {"last_slot_key": None}
 
     raw_state = json.loads(path.read_text(encoding="utf-8"))
-    seen_by_source = raw_state.get("seen_by_source")
-    if not isinstance(seen_by_source, dict):
-        seen_by_source = {}
-
-    legacy_pfizer_urls = raw_state.get("seen_urls", [])
-    if legacy_pfizer_urls and "Pfizer" not in seen_by_source:
-        seen_by_source["Pfizer"] = legacy_pfizer_urls
-
-    normalized = {
+    return True, {
         "last_scan_bjt": raw_state.get("last_scan_bjt"),
         "last_slot_key": raw_state.get("last_slot_key"),
-        "seen_by_source": {
-            str(source): sorted({str(url) for url in urls})
-            for source, urls in seen_by_source.items()
-            if isinstance(urls, list)
-        },
     }
-    return True, normalized
 
 
-def save_state(path: Path, seen_by_source: dict[str, set[str]], last_slot_key: str | None) -> None:
+def save_state(path: Path, last_slot_key: str | None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    pfizer_urls = sorted(seen_by_source.get("Pfizer", set()))
     payload = {
         "last_scan_bjt": scan_time_label(),
         "last_slot_key": last_slot_key,
-        "seen_urls": pfizer_urls,
-        "seen_by_source": {
-            source: sorted(urls)
-            for source, urls in sorted(seen_by_source.items())
-        },
+        "report_cutoff_date": REPORT_CUTOFF_DATE.isoformat(),
     }
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
@@ -314,6 +500,15 @@ def translate_title(title: str) -> str:
         return title
 
 
+def build_translated_titles(items: list[NewsItem]) -> dict[str, str]:
+    if len(items) > 20:
+        print(
+            "Skipping online title translation because the report contains more than 20 items."
+        )
+        return {item.url: item.title for item in items}
+    return {item.url: translate_title(item.title) for item in items}
+
+
 def current_slot_key(now: datetime) -> str | None:
     if now.weekday() > 4:
         return None
@@ -327,6 +522,10 @@ def should_force_scan() -> bool:
     return os.getenv("FORCE_SCAN", "").lower() in {"1", "true", "yes"}
 
 
+def format_date(value: date) -> str:
+    return value.strftime("%Y-%m-%d")
+
+
 def build_report_text(
     items: list[NewsItem],
     translated_titles: dict[str, str],
@@ -335,6 +534,7 @@ def build_report_text(
 ) -> str:
     lines = [
         f"扫描时间：{label}",
+        f"统计起点：{REPORT_CUTOFF_DATE.isoformat()}",
         "",
         f"扫描结果：{summary_text}",
     ]
@@ -344,6 +544,7 @@ def build_report_text(
     lines.append("")
     for index, item in enumerate(items, start=1):
         lines.append(f"{index}. 来源：{item.source}")
+        lines.append(f"   发布日期：{format_date(item.published_on)}")
         lines.append(f"   中文标题：{translated_titles[item.url]}")
         lines.append(f"   原始标题：{item.title}")
         lines.append(f"   网页地址：{item.url}")
@@ -382,14 +583,16 @@ def build_document_xml(
     summary_text: str,
 ) -> str:
     body_parts = [
-        paragraph_xml("企业新闻监测更新", "Title"),
+        paragraph_xml("企业新闻监测报告", "Title"),
         paragraph_xml(f"扫描时间：{label}", "Subtitle"),
+        paragraph_xml(f"统计起点：{REPORT_CUTOFF_DATE.isoformat()}", "Subtitle"),
         paragraph_xml(f"扫描结果：{summary_text}"),
     ]
     for index, item in enumerate(items, start=1):
         body_parts.extend(
             [
                 paragraph_xml(f"{index}. {item.source}", "Heading1"),
+                paragraph_xml(f"发布日期：{format_date(item.published_on)}"),
                 paragraph_xml(f"中文标题：{translated_titles[item.url]}"),
                 paragraph_xml(f"原始标题：{item.title}"),
                 hyperlink_paragraph_xml(item.url, f"rId{index + 1}"),
@@ -519,6 +722,20 @@ def create_report(
         print(f"Word document generated: {output_path}")
 
 
+def fetch_items_for_report() -> list[NewsItem]:
+    items = (
+        fetch_pfizer_items()
+        + fetch_astrazeneca_items()
+        + fetch_roche_items()
+        + fetch_innovent_items()
+    )
+    return sorted(
+        items,
+        key=lambda item: (item.published_on, item.source, item.title.lower()),
+        reverse=True,
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--state", type=Path, default=STATE_PATH)
@@ -529,7 +746,7 @@ def main() -> int:
     now = bjt_now()
     forced = should_force_scan()
 
-    state_exists, state = load_state(args.state)
+    _, state = load_state(args.state)
     slot_key = current_slot_key(now)
     if not forced:
         if slot_key is None:
@@ -539,89 +756,34 @@ def main() -> int:
             print(f"Scan already completed for Beijing slot {slot_key}.")
             return 0
 
-    seen_by_source = {
-        source: set(urls)
-        for source, urls in state.get("seen_by_source", {}).items()
-    }
+    items = fetch_items_for_report()
+    translated_titles = build_translated_titles(items)
 
-    first_run_should_report = (
-        os.getenv("REPORT_ON_FIRST_RUN", "").lower() in {"1", "true", "yes"}
-        or os.getenv("SEND_ON_FIRST_RUN", "").lower() in {"1", "true", "yes"}
-    )
-
-    current_items = fetch_pfizer_items() + fetch_astrazeneca_items() + fetch_innovent_items()
-    current_by_source: dict[str, set[str]] = {}
-    for item in current_items:
-        current_by_source.setdefault(item.source, set()).add(item.url)
-
-    roche_urls = fetch_roche_urls()
-    current_by_source["Roche"] = set(roche_urls)
-
-    uninitialized_sources = {
-        source for source in current_by_source if source not in seen_by_source
-    }
-    baseline_new_sources_only = state_exists and not first_run_should_report
-
-    new_items = [
-        item
-        for item in current_items
-        if item.url not in seen_by_source.get(item.source, set())
-        and not (baseline_new_sources_only and item.source in uninitialized_sources)
-    ]
-    new_roche_urls = [
-        url
-        for url in roche_urls
-        if url not in seen_by_source.get("Roche", set())
-        and not (baseline_new_sources_only and "Roche" in uninitialized_sources)
-    ]
-    new_items.extend(fetch_roche_item(url) for url in new_roche_urls)
-
-    merged_seen_by_source = {
-        source: set(seen_by_source.get(source, set())) | urls
-        for source, urls in current_by_source.items()
-    }
-    for source, urls in seen_by_source.items():
-        merged_seen_by_source.setdefault(source, set()).update(urls)
-
-    effective_slot_key = slot_key or state.get("last_slot_key")
     label = scan_time_label()
-
-    if not state_exists and not first_run_should_report:
-        summary_text = "首次扫描已建立基线，未发现需要通知的新更新。"
-        print("State file does not exist. Initializing baseline and generating a report.")
-        create_report(args.output_dir, [], {}, label, summary_text, args.dry_run)
-        if not args.dry_run:
-            save_state(args.state, merged_seen_by_source, effective_slot_key)
-        return 0
-
-    if baseline_new_sources_only and uninitialized_sources:
+    if items:
+        summary_text = (
+            f"自 {REPORT_CUTOFF_DATE.isoformat()} 起共发现 {len(items)} 条符合条件的 press release。"
+        )
         print(
-            "Initialized baseline for newly added sources: "
-            + ", ".join(sorted(uninitialized_sources))
+            f"Collected {len(items)} press release item(s) on or after {REPORT_CUTOFF_DATE.isoformat()}."
+        )
+    else:
+        summary_text = f"自 {REPORT_CUTOFF_DATE.isoformat()} 起未发现符合条件的 press release。"
+        print(
+            f"No press release items were found on or after {REPORT_CUTOFF_DATE.isoformat()}."
         )
 
-    if not new_items:
-        summary_text = "未发现新的更新。"
-        print("No new items found across the monitored sites.")
-        create_report(args.output_dir, [], {}, label, summary_text, args.dry_run)
-        if not args.dry_run:
-            save_state(args.state, merged_seen_by_source, effective_slot_key)
-        return 0
-
-    translated_titles = {item.url: translate_title(item.title) for item in new_items}
-    summary_text = f"发现 {len(new_items)} 条新的更新。"
-    print(f"Found {len(new_items)} new item(s).")
     create_report(
         args.output_dir,
-        new_items,
+        items,
         translated_titles,
         label,
         summary_text,
         args.dry_run,
     )
-    if not args.dry_run:
-        save_state(args.state, merged_seen_by_source, effective_slot_key)
 
+    if not args.dry_run:
+        save_state(args.state, slot_key or state.get("last_slot_key"))
     return 0
 
 
