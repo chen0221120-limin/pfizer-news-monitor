@@ -42,7 +42,8 @@ PFIZER_MARKERS = (
 ASTRAZENECA_MARKER = "/media-centre/press-releases/"
 ROCHE_RELEASE_PREFIX = "https://www.roche.com/media/releases/"
 ROCHE_MAX_ITEMS = 200
-SLOT_HOURS_BJT = {9, 12, 17}
+SLOT_START_HOURS_BJT = (9, 12, 17)
+SLOT_WINDOW_HOURS = 2
 
 
 @dataclass(frozen=True)
@@ -316,9 +317,10 @@ def translate_title(title: str) -> str:
 def current_slot_key(now: datetime) -> str | None:
     if now.weekday() > 4:
         return None
-    if now.hour not in SLOT_HOURS_BJT:
-        return None
-    return now.strftime("%Y-%m-%d") + f"-{now.hour:02d}"
+    for start_hour in SLOT_START_HOURS_BJT:
+        if start_hour <= now.hour < start_hour + SLOT_WINDOW_HOURS:
+            return now.strftime("%Y-%m-%d") + f"-{start_hour:02d}"
+    return None
 
 
 def should_force_scan() -> bool:
