@@ -1,45 +1,65 @@
-# Pfizer News Monitor
+# Pharma News Monitor
 
-This project scans the Pfizer Newsroom on GitHub Actions at Beijing time on weekdays at 09:07, 12:07, and 17:07:
+This project scans the following news pages on GitHub Actions:
 
-https://www.pfizer.com/newsroom
+- [Pfizer Newsroom](https://www.pfizer.com/newsroom)
+- [AstraZeneca Press Releases](https://www.astrazeneca.com/media-centre/press-releases.html)
+- [Roche Media Releases](https://www.roche.com/media/releases)
+- [Innovent News](https://www.innoventbio.com/#/news)
 
-When new items appear since the previous scan, it generates a local Microsoft Word document containing:
+## Schedule
+
+GitHub Actions runs every 5 minutes during the UTC hours that correspond to Beijing weekday scan slots:
+
+- Beijing `09:00`
+- Beijing `12:00`
+- Beijing `17:00`
+
+The Python script only allows one real scan per Beijing slot. This makes the schedule more reliable than relying on one exact minute trigger.
+
+## Output
+
+When new items are found since the previous successful scan, the workflow generates a local Microsoft Word document in:
+
+```text
+reports/news-monitor-YYYYMMDD-HHMMSS.docx
+```
+
+The workflow also uploads the file as a GitHub Actions artifact:
+
+```text
+news-monitor-report
+```
+
+The report includes:
 
 - scan time
+- source site
 - translated Chinese title
-- original English title
+- original title
 - article URL
 
-The first run creates a baseline state file and does not generate a historical report. Later runs create a Word document only when new items are detected.
+## State
 
-## GitHub Actions Output
-
-When new items are found, the workflow generates:
+The monitor stores scan state in:
 
 ```text
-reports/pfizer-news-YYYYMMDD-HHMMSS.docx
+.state/pfizer_news_seen.json
 ```
 
-The workflow also uploads the Word document as a GitHub Actions artifact:
-
-```text
-pfizer-news-report
-```
-
-You can download it from the `Artifacts` section of the related workflow run.
+This file now keeps per-site seen URLs and the last completed Beijing time slot.
 
 ## Files
 
 - `.github/workflows/pfizer-news-monitor.yml`: scheduled GitHub Actions workflow
-- `scripts/pfizer_news_monitor.py`: fetches Pfizer Newsroom, detects new items, translates titles, and generates the Word document
-- `.state/pfizer_news_seen.json`: stores the URLs that have already been seen
+- `scripts/pfizer_news_monitor.py`: fetches monitored pages, detects new items, translates titles, and generates the Word document
+- `.state/pfizer_news_seen.json`: stores seen URLs and slot state
 
 ## Manual Test
 
-You can trigger the workflow manually from the GitHub Actions page.
+You can trigger the workflow manually from the GitHub Actions page. Manual runs bypass the schedule window.
 
-To test the scan locally without generating a Word document:
+To test locally without generating a Word document or changing the saved state:
 
 ```bash
 python scripts/pfizer_news_monitor.py --dry-run
