@@ -2,8 +2,9 @@ name: Pfizer News Monitor
 
 on:
   schedule:
-    # Beijing time: weekdays 09:07, 12:07, 17:07.
-    - cron: "7 1,4,9 * * 1-5"
+    # Run every 5 minutes during the UTC hours that map to Beijing 09:00, 12:00, and 17:00.
+    # The script itself ensures each Beijing slot is processed only once.
+    - cron: "*/5 1,4,9 * * 1-5"
   workflow_dispatch:
 
 permissions:
@@ -23,13 +24,15 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Scan Pfizer newsroom
+      - name: Scan monitored news pages
+        env:
+          FORCE_SCAN: ${{ github.event_name == 'workflow_dispatch' && 'true' || 'false' }}
         run: python scripts/pfizer_news_monitor.py
 
       - name: Upload Word document
         uses: actions/upload-artifact@v4
         with:
-          name: pfizer-news-report
+          name: news-monitor-report
           path: reports/*.docx
           if-no-files-found: ignore
 
