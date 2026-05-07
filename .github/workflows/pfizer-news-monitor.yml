@@ -2,9 +2,9 @@ name: Pfizer News Monitor
 
 on:
   schedule:
-    # Run every 5 minutes during the UTC hours that map to Beijing 09:00, 12:00, and 17:00.
-    # The script itself ensures each Beijing slot is processed only once.
-    - cron: "*/5 1,4,9 * * 1-5"
+    # Run every 5 minutes on weekdays.
+    # The script itself gates execution to Beijing 09/12/17 slots and allows a catch-up window.
+    - cron: "*/5 * * * 1-5"
   workflow_dispatch:
 
 permissions:
