@@ -40,6 +40,8 @@ ROCHE_RELEASE_PREFIX = "https://www.roche.com/media/releases/"
 ROCHE_MAX_ITEMS = 200
 SLOT_START_HOURS_BJT = (9, 12, 17)
 SLOT_WINDOW_HOURS = 2
+EXIT_OUTSIDE_WINDOW = 2
+EXIT_ALREADY_SCANNED = 3
 
 
 @dataclass(frozen=True)
@@ -751,10 +753,10 @@ def main() -> int:
     if not forced:
         if slot_key is None:
             print("Current Beijing time is outside the scheduled scan windows.")
-            return 0
+            return EXIT_OUTSIDE_WINDOW
         if state.get("last_slot_key") == slot_key:
             print(f"Scan already completed for Beijing slot {slot_key}.")
-            return 0
+            return EXIT_ALREADY_SCANNED
 
     items = fetch_items_for_report()
     translated_titles = build_translated_titles(items)
