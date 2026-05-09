@@ -25,6 +25,8 @@ Each slot has a catch-up window of up to 2 hours:
 
 The workflow no longer runs all day. It only starts during the hours that can produce a real scan, and the Python script still allows only one real scan per slot.
 
+If a run still starts outside a valid slot, or if that Beijing slot has already been completed, the job exits with a non-zero code. In other words: a green `Success` run should now mean a real scan happened and a Word report should exist.
+
 ## Output
 
 For every successful scan, the workflow generates a local Microsoft Word document in:
