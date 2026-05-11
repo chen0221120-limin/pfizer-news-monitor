@@ -11,6 +11,7 @@ import os
 import re
 import time
 import zipfile
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import date, datetime
 from html.parser import HTMLParser
@@ -503,12 +504,13 @@ def translate_title(title: str) -> str:
 
 
 def build_translated_titles(items: list[NewsItem]) -> dict[str, str]:
-    if len(items) > 20:
-        print(
-            "Skipping online title translation because the report contains more than 20 items."
-        )
-        return {item.url: item.title for item in items}
-    return {item.url: translate_title(item.title) for item in items}
+    title_cache: dict[str, str] = {}
+    translated: dict[str, str] = {}
+    for item in items:
+        if item.title not in title_cache:
+            title_cache[item.title] = translate_title(item.title)
+        translated[item.url] = title_cache[item.title]
+    return translated
 
 
 def current_slot_key(now: datetime) -> str | None:
@@ -528,6 +530,24 @@ def format_date(value: date) -> str:
     return value.strftime("%Y-%m-%d")
 
 
+def group_items_by_source(items: list[NewsItem]) -> OrderedDict[str, list[NewsItem]]:
+    grouped: OrderedDict[str, list[NewsItem]] = OrderedDict()
+    source_order = ("Pfizer", "AstraZeneca", "Roche", "Innovent")
+    for source in source_order:
+        source_items = [
+            item
+            for item in items
+            if item.source == source
+        ]
+        if source_items:
+            grouped[source] = sorted(
+                source_items,
+                key=lambda item: (item.published_on, item.title.lower()),
+                reverse=True,
+            )
+    return grouped
+
+
 def build_report_text(
     items: list[NewsItem],
     translated_titles: dict[str, str],
@@ -543,14 +563,19 @@ def build_report_text(
     if not items:
         return "\n".join(lines).strip() + "\n"
 
-    lines.append("")
-    for index, item in enumerate(items, start=1):
-        lines.append(f"{index}. 来源：{item.source}")
-        lines.append(f"   发布日期：{format_date(item.published_on)}")
-        lines.append(f"   中文标题：{translated_titles[item.url]}")
-        lines.append(f"   原始标题：{item.title}")
-        lines.append(f"   网页地址：{item.url}")
+    grouped = group_items_by_source(items)
+    overall_index = 1
+    for source, source_items in grouped.items():
         lines.append("")
+        lines.append(f"{source}")
+        lines.append("-" * len(source))
+        for item in source_items:
+            lines.append(f"{overall_index}. 发布日期：{format_date(item.published_on)}")
+            lines.append(f"   中文标题：{translated_titles[item.url]}")
+            lines.append(f"   英文标题：{item.title}")
+            lines.append(f"   网页地址：{item.url}")
+            lines.append("")
+            overall_index += 1
     return "\n".join(lines).strip() + "\n"
 
 
@@ -590,16 +615,20 @@ def build_document_xml(
         paragraph_xml(f"统计起点：{REPORT_CUTOFF_DATE.isoformat()}", "Subtitle"),
         paragraph_xml(f"扫描结果：{summary_text}"),
     ]
-    for index, item in enumerate(items, start=1):
-        body_parts.extend(
-            [
-                paragraph_xml(f"{index}. {item.source}", "Heading1"),
-                paragraph_xml(f"发布日期：{format_date(item.published_on)}"),
-                paragraph_xml(f"中文标题：{translated_titles[item.url]}"),
-                paragraph_xml(f"原始标题：{item.title}"),
-                hyperlink_paragraph_xml(item.url, f"rId{index + 1}"),
-            ]
-        )
+    grouped = group_items_by_source(items)
+    rel_index = 2
+    for source, source_items in grouped.items():
+        body_parts.append(paragraph_xml(source, "Heading1"))
+        for item in source_items:
+            body_parts.extend(
+                [
+                    paragraph_xml(f"发布日期：{format_date(item.published_on)}"),
+                    paragraph_xml(f"中文标题：{translated_titles[item.url]}"),
+                    paragraph_xml(f"英文标题：{item.title}"),
+                    hyperlink_paragraph_xml(item.url, f"rId{rel_index}"),
+                ]
+            )
+            rel_index += 1
 
     return f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -621,9 +650,9 @@ def build_relationships_xml(items: list[NewsItem]) -> str:
         'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" '
         'Target="styles.xml"/>'
     ]
-    for index, item in enumerate(items, start=1):
+    for index, item in enumerate(items, start=2):
         relationships.append(
-            f'<Relationship Id="rId{index + 1}" '
+            f'<Relationship Id="rId{index}" '
             'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" '
             f'Target="{escape(item.url)}" TargetMode="External"/>'
         )
