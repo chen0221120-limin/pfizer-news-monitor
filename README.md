@@ -47,7 +47,9 @@ The report includes:
 - cutoff date (`2026-04-01`)
 - scan result summary
 - every monitored item published on or after `2026-04-01`
-- source site, publication date, Chinese title (or original title if translation is skipped), original title, and article URL
+- grouped by company
+- newest-to-oldest ordering within each company
+- source site, publication date, Chinese title, English title, and article URL
 
 The report is no longer limited to "new since last scan". Each scan rebuilds the report from the live page data and includes all qualifying items published on or after `2026-04-01`.
 
