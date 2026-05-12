@@ -1,6 +1,6 @@
 # GI Oncology Competitor Monitor
 
-This project runs a manual GitHub Actions workflow that scans official company websites for GI oncology R&D updates.
+This project runs manual GitHub Actions workflows that scan official company websites for GI oncology R&D updates.
 
 The monitor is driven by:
 
@@ -19,9 +19,14 @@ The configuration was generated from the curated Excel tracker and includes:
 
 ## Trigger
 
-The workflow is manual-only.
+The workflows are manual-only.
 
-Open GitHub Actions, select `Pfizer News Monitor`, and click `Run workflow` when you want to generate a new report.
+Open GitHub Actions and run both workflows when you want a full scan:
+
+- `GI Monitor Group A`
+- `GI Monitor Group B`
+
+The company list is split automatically into 2 stable groups, so the same master configuration can be scanned in two smaller runs instead of one large run.
 
 ## Scan Logic
 
@@ -51,10 +56,11 @@ Every successful run generates a Microsoft Word document in:
 reports/gi-oncology-monitor-YYYYMMDD-HHMMSS.docx
 ```
 
-The workflow uploads the file as a GitHub Actions artifact:
+Each workflow uploads its file as a GitHub Actions artifact:
 
 ```text
-news-monitor-report
+news-monitor-report-group-a
+news-monitor-report-group-b
 ```
 
 The report includes:
@@ -74,7 +80,8 @@ The report includes:
 The monitor stores the latest scan metadata in:
 
 ```text
-.state/pfizer_news_seen.json
+.state/pfizer_news_seen_group_a.json
+.state/pfizer_news_seen_group_b.json
 ```
 
 ## Local Test
@@ -91,12 +98,14 @@ To reduce or increase concurrency:
 python scripts/pfizer_news_monitor.py --dry-run --max-workers 4
 ```
 
-The workflow defaults are tuned for faster daily manual scans:
+The workflow defaults are tuned for broader coverage while keeping each manual run smaller:
 
 ```text
-MAX_WORKERS=24
-MAX_PAGES_PER_COMPANY=10
-MAX_LINKS_FROM_PAGE=5
-REQUEST_TIMEOUT_SECONDS=5
-REQUEST_RETRIES=1
+MAX_WORKERS=10
+MAX_PAGES_PER_COMPANY=42
+MAX_ENTRY_PAGES_PER_COMPANY=18
+MAX_ARTICLE_PAGES_PER_COMPANY=24
+MAX_LINKS_FROM_PAGE=24
+REQUEST_TIMEOUT_SECONDS=12
+REQUEST_RETRIES=2
 ```
