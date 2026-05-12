@@ -12,7 +12,8 @@ import os
 import re
 import time
 import zipfile
-from dataclasses import dataclass, field
+from collections import deque
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 from html.parser import HTMLParser
 from pathlib import Path
@@ -28,11 +29,14 @@ STATE_PATH = Path(".state/pfizer_news_seen.json")
 REPORT_DIR = Path("reports")
 REPORT_PREFIX = "gi-oncology-monitor"
 
-DEFAULT_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT_SECONDS", "5"))
-DEFAULT_RETRIES = int(os.getenv("REQUEST_RETRIES", "1"))
-MAX_PAGES_PER_COMPANY = int(os.getenv("MAX_PAGES_PER_COMPANY", "10"))
-MAX_LINKS_FROM_PAGE = int(os.getenv("MAX_LINKS_FROM_PAGE", "5"))
-MAX_WORKERS = int(os.getenv("MAX_WORKERS", "24"))
+DEFAULT_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT_SECONDS", "12"))
+DEFAULT_RETRIES = int(os.getenv("REQUEST_RETRIES", "2"))
+MAX_PAGES_PER_COMPANY = int(os.getenv("MAX_PAGES_PER_COMPANY", "42"))
+MAX_ENTRY_PAGES_PER_COMPANY = int(os.getenv("MAX_ENTRY_PAGES_PER_COMPANY", "18"))
+MAX_ARTICLE_PAGES_PER_COMPANY = int(os.getenv("MAX_ARTICLE_PAGES_PER_COMPANY", "24"))
+MAX_LINKS_FROM_PAGE = int(os.getenv("MAX_LINKS_FROM_PAGE", "24"))
+MAX_WORKERS = int(os.getenv("MAX_WORKERS", "10"))
+DISCOVERY_QUEUE_LIMIT = int(os.getenv("DISCOVERY_QUEUE_LIMIT", "120"))
 
 LINK_HINTS = (
     "news",
@@ -54,6 +58,55 @@ LINK_HINTS = (
     "hcc",
     "research",
     "development",
+)
+
+HIGH_PRIORITY_PATH_HINTS = (
+    "news",
+    "newsroom",
+    "press",
+    "release",
+    "media",
+    "pipeline",
+    "research",
+    "development",
+    "science",
+    "clinical",
+    "trial",
+    "product",
+    "oncology",
+)
+
+LOW_VALUE_PATH_HINTS = (
+    "career",
+    "careers",
+    "job",
+    "investor",
+    "event",
+    "events",
+    "contact",
+    "privacy",
+    "cookie",
+    "terms",
+    "esg",
+    "governance",
+    "supplier",
+)
+
+SKIP_FILE_EXTENSIONS = (
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".gif",
+    ".svg",
+    ".webp",
+    ".pdf",
+    ".zip",
+    ".doc",
+    ".docx",
+    ".xls",
+    ".xlsx",
+    ".ppt",
+    ".pptx",
 )
 
 
@@ -95,6 +148,12 @@ class TextBlock:
     text: str
     tag: str
     url: str | None = None
+
+
+@dataclass(frozen=True)
+class DiscoveredLink:
+    url: str
+    score: int
 
 
 @dataclass
@@ -145,6 +204,23 @@ def load_config(path: Path) -> MonitorConfig:
         common_paths=tuple(raw.get("common_paths", [])),
         companies=tuple(companies),
     )
+
+
+def slice_companies(
+    config: MonitorConfig,
+    group_count: int,
+    group_index: int,
+) -> MonitorConfig:
+    if group_count <= 1:
+        return config
+    if group_index < 1 or group_index > group_count:
+        raise ValueError(f"group_index must be between 1 and {group_count}")
+    selected = tuple(
+        company
+        for offset, company in enumerate(config.companies)
+        if offset % group_count == group_index - 1
+    )
+    return replace(config, companies=selected)
 
 
 def fetch_text(url: str, timeout: int = DEFAULT_TIMEOUT, retries: int = DEFAULT_RETRIES) -> str:
@@ -200,12 +276,76 @@ def likely_useful_link(url: str) -> bool:
     return any(hint in path for hint in LINK_HINTS)
 
 
+def has_skippable_extension(url: str) -> bool:
+    path = urlparse(url).path.lower()
+    return any(path.endswith(extension) for extension in SKIP_FILE_EXTENSIONS)
+
+
+def path_depth(url: str) -> int:
+    path = urlparse(url).path.strip("/")
+    if not path:
+        return 0
+    return len([part for part in path.split("/") if part])
+
+
+def looks_like_article_url(url: str) -> bool:
+    if has_skippable_extension(url):
+        return False
+    path = urlparse(url).path.lower()
+    if any(hint in path for hint in LOW_VALUE_PATH_HINTS):
+        return False
+    if re.search(r"/20\d{2}/\d{1,2}/", path):
+        return True
+    if re.search(r"/20\d{2}-\d{2}-\d{2}", path):
+        return True
+    if any(hint in path for hint in LINK_HINTS) and path_depth(url) >= 2:
+        return True
+    return path_depth(url) >= 3 and any(char.isdigit() for char in path)
+
+
+def score_discovered_link(url: str, anchor_text: str) -> int:
+    if has_skippable_extension(url):
+        return -100
+    path = urlparse(url).path.lower()
+    text = anchor_text.lower()
+    score = 0
+    if any(hint in path for hint in LOW_VALUE_PATH_HINTS):
+        score -= 20
+    if any(hint in path for hint in HIGH_PRIORITY_PATH_HINTS):
+        score += 8
+    if likely_useful_link(url):
+        score += 6
+    if looks_like_article_url(url):
+        score += 8
+    if any(hint in text for hint in LINK_HINTS):
+        score += 4
+    if parse_date_text(anchor_text):
+        score += 4
+    score += min(path_depth(url), 5)
+    return score
+
+
+def prioritize_urls(urls: list[str]) -> list[str]:
+    seen: set[str] = set()
+    ranked: list[tuple[int, int, str]] = []
+    for index, url in enumerate(urls):
+        if not url or url in seen or has_skippable_extension(url):
+            continue
+        seen.add(url)
+        score = score_discovered_link(url, "")
+        if looks_like_article_url(url):
+            score += 10
+        ranked.append((-score, index, url))
+    ranked.sort()
+    return [url for _, _, url in ranked]
+
+
 class LinkParser(HTMLParser):
     def __init__(self, base_url: str, roots: tuple[str, ...]) -> None:
         super().__init__(convert_charrefs=True)
         self.base_url = base_url
         self.roots = roots
-        self.links: list[str] = []
+        self.links: dict[str, int] = {}
         self._current_href: str | None = None
         self._current_text: list[str] = []
 
@@ -225,14 +365,13 @@ class LinkParser(HTMLParser):
         if tag.lower() != "a" or self._current_href is None:
             return
         url = normalize_url(self.base_url, self._current_href)
-        text = normalize_space(" ".join(self._current_text)).lower()
-        if (
-            url
-            and same_site_or_subsite(url, self.roots)
-            and (likely_useful_link(url) or any(hint in text for hint in LINK_HINTS))
-            and url not in self.links
-        ):
-            self.links.append(url)
+        text = normalize_space(" ".join(self._current_text))
+        if url and same_site_or_subsite(url, self.roots):
+            score = score_discovered_link(url, text)
+            if score > 0:
+                current = self.links.get(url, 0)
+                if score > current:
+                    self.links[url] = score
         self._current_href = None
 
 
@@ -504,6 +643,8 @@ def root_urls(urls: tuple[str, ...]) -> tuple[str, ...]:
 
 def candidate_urls(company: CompanyConfig, config: MonitorConfig) -> list[str]:
     urls: list[str] = []
+    high_priority: list[str] = []
+    low_priority: list[str] = []
     roots = root_urls(company.official_urls)
     for url in company.official_urls:
         if url and url not in urls:
@@ -511,18 +652,20 @@ def candidate_urls(company: CompanyConfig, config: MonitorConfig) -> list[str]:
     for root in roots:
         for path in config.common_paths:
             candidate = urljoin(root, path.lstrip("/"))
-            if candidate not in urls:
-                urls.append(candidate)
+            bucket = high_priority if any(hint in candidate.lower() for hint in HIGH_PRIORITY_PATH_HINTS) else low_priority
+            if candidate not in urls and candidate not in high_priority and candidate not in low_priority:
+                bucket.append(candidate)
         sitemap = urljoin(root, "sitemap.xml")
-        if sitemap not in urls:
-            urls.append(sitemap)
-    return urls[:MAX_PAGES_PER_COMPANY]
+        if sitemap not in urls and sitemap not in high_priority and sitemap not in low_priority:
+            high_priority.append(sitemap)
+    return urls + prioritize_urls(high_priority) + prioritize_urls(low_priority)
 
 
 def extract_links(page_url: str, page_text: str, roots: tuple[str, ...]) -> list[str]:
     parser = LinkParser(page_url, roots)
     parser.feed(page_text)
-    return parser.links[:MAX_LINKS_FROM_PAGE]
+    ranked = sorted(parser.links.items(), key=lambda item: (-item[1], item[0]))
+    return [url for url, _ in ranked[:MAX_LINKS_FROM_PAGE]]
 
 
 def scan_company(company: CompanyConfig, config: MonitorConfig, start_date: date, end_date: date) -> CompanyScanResult:
@@ -534,14 +677,54 @@ def scan_company(company: CompanyConfig, config: MonitorConfig, start_date: date
         )
 
     roots = root_urls(company.official_urls)
-    queue = candidate_urls(company, config)
+    discovery_queue = deque(candidate_urls(company, config))
+    article_queue: deque[str] = deque()
+    queued_discovery = set(discovery_queue)
+    queued_articles: set[str] = set()
     seen_urls: set[str] = set()
     pages_checked = 0
+    discovery_pages_checked = 0
+    article_pages_checked = 0
     fetch_success = False
     findings: list[Finding] = []
+    finding_urls: set[str] = set()
 
-    while queue and pages_checked < MAX_PAGES_PER_COMPANY:
-        url = queue.pop(0)
+    def enqueue_discovery(url: str) -> None:
+        if (
+            url
+            and url not in seen_urls
+            and url not in queued_discovery
+            and len(queued_discovery) < DISCOVERY_QUEUE_LIMIT
+            and same_site_or_subsite(url, roots)
+            and not has_skippable_extension(url)
+        ):
+            discovery_queue.append(url)
+            queued_discovery.add(url)
+
+    def enqueue_article(url: str) -> None:
+        if (
+            url
+            and url not in seen_urls
+            and url not in queued_articles
+            and same_site_or_subsite(url, roots)
+            and not has_skippable_extension(url)
+        ):
+            article_queue.append(url)
+            queued_articles.add(url)
+
+    def collect_finding(url: str, page_text: str) -> None:
+        finding = evaluate_page(company, url, page_text, config, start_date, end_date)
+        if finding and finding.url not in finding_urls:
+            findings.append(finding)
+            finding_urls.add(finding.url)
+
+    while (
+        discovery_queue
+        and pages_checked < MAX_PAGES_PER_COMPANY
+        and discovery_pages_checked < MAX_ENTRY_PAGES_PER_COMPANY
+    ):
+        url = discovery_queue.popleft()
+        queued_discovery.discard(url)
         if not url or url in seen_urls:
             continue
         seen_urls.add(url)
@@ -551,15 +734,37 @@ def scan_company(company: CompanyConfig, config: MonitorConfig, start_date: date
             continue
         fetch_success = True
         pages_checked += 1
-
-        if likely_useful_link(url) or url in company.official_urls:
-            finding = evaluate_page(company, url, page_text, config, start_date, end_date)
-            if finding and finding.url not in {item.url for item in findings}:
-                findings.append(finding)
+        discovery_pages_checked += 1
+        collect_finding(url, page_text)
 
         for link in extract_links(url, page_text, roots):
-            if link not in seen_urls and link not in queue and len(queue) < MAX_PAGES_PER_COMPANY * 2:
-                queue.append(link)
+            if looks_like_article_url(link):
+                enqueue_article(link)
+            else:
+                enqueue_discovery(link)
+
+    while (
+        article_queue
+        and pages_checked < MAX_PAGES_PER_COMPANY
+        and article_pages_checked < MAX_ARTICLE_PAGES_PER_COMPANY
+    ):
+        url = article_queue.popleft()
+        queued_articles.discard(url)
+        if not url or url in seen_urls:
+            continue
+        seen_urls.add(url)
+        try:
+            page_text = fetch_text(url)
+        except Exception:
+            continue
+        fetch_success = True
+        pages_checked += 1
+        article_pages_checked += 1
+        collect_finding(url, page_text)
+
+        for link in extract_links(url, page_text, roots):
+            if looks_like_article_url(link):
+                enqueue_article(link)
 
     unavailable_reason = None
     if not fetch_success:
@@ -806,9 +1011,13 @@ def main() -> int:
     parser.add_argument("--output-dir", type=Path, default=REPORT_DIR)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--max-workers", type=int, default=int(os.getenv("MAX_WORKERS", MAX_WORKERS)))
+    parser.add_argument("--company-group-count", type=int, default=int(os.getenv("COMPANY_GROUP_COUNT", "1")))
+    parser.add_argument("--company-group-index", type=int, default=int(os.getenv("COMPANY_GROUP_INDEX", "1")))
+    parser.add_argument("--report-prefix", default=os.getenv("REPORT_PREFIX_OVERRIDE", REPORT_PREFIX))
     args = parser.parse_args()
 
     config = load_config(args.config)
+    config = slice_companies(config, max(args.company_group_count, 1), args.company_group_index)
     end_date = bjt_now().date()
     start_date = end_date - timedelta(days=max(config.scan_days - 1, 0))
 
@@ -817,7 +1026,7 @@ def main() -> int:
     print_summary(findings, results, start_date, end_date)
 
     filename_label = bjt_now().strftime("%Y%m%d-%H%M%S")
-    output_path = args.output_dir / f"{REPORT_PREFIX}-{filename_label}.docx"
+    output_path = args.output_dir / f"{args.report_prefix}-{filename_label}.docx"
     if not args.dry_run:
         create_word_document(output_path, findings, results, label, start_date, end_date)
         save_state(args.state, findings, results, start_date, end_date)
