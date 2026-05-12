@@ -64,6 +64,8 @@ The report includes:
 - number of monitored companies
 - number of matched findings
 - matched company updates grouped by company
+- a news title or matched title-like item extracted from the page
+- the matched text snippet, so the result can be reviewed before opening the link
 - matched products, targets, trial identifiers, and context terms
 - companies whose official content could not be read
 
@@ -87,4 +89,14 @@ To reduce or increase concurrency:
 
 ```bash
 python scripts/pfizer_news_monitor.py --dry-run --max-workers 4
+```
+
+The workflow defaults are tuned for faster daily manual scans:
+
+```text
+MAX_WORKERS=24
+MAX_PAGES_PER_COMPANY=10
+MAX_LINKS_FROM_PAGE=5
+REQUEST_TIMEOUT_SECONDS=5
+REQUEST_RETRIES=1
 ```
