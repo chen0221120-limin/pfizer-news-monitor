@@ -7,25 +7,11 @@ This project scans the following news pages on GitHub Actions:
 - [Roche Media Releases](https://www.roche.com/media/releases)
 - [Innovent News](https://www.innoventbio.com/#/news)
 
-## Schedule
+## Trigger
 
-GitHub Actions runs every 5 minutes on weekdays, but only inside the UTC hours that map to the Beijing scan windows and their catch-up windows.
+This workflow is now manual-only.
 
-The script only performs a real scan for these Beijing slots:
-
-- Beijing `09:00`
-- Beijing `12:00`
-- Beijing `17:00`
-
-Each slot has a catch-up window of up to 2 hours:
-
-- `09:00` slot can still be completed between `09:00` and `10:59`
-- `12:00` slot can still be completed between `12:00` and `13:59`
-- `17:00` slot can still be completed between `17:00` and `18:59`
-
-The workflow no longer runs all day. It only starts during the hours that can produce a real scan, and the Python script still allows only one real scan per slot.
-
-If a run still starts outside a valid slot, or if that Beijing slot has already been completed, the job exits with a non-zero code. In other words: a green `Success` run should now mean a real scan happened and a Word report should exist.
+Use GitHub Actions and click `Run workflow` whenever you want to run a scan and generate a Word report.
 
 ## Output
 
@@ -61,17 +47,17 @@ The monitor stores scan state in:
 .state/pfizer_news_seen.json
 ```
 
-This file now keeps the last completed Beijing time slot, the latest scan time, and the active report cutoff date.
+This file now keeps the latest scan time and the active report cutoff date.
 
 ## Files
 
-- `.github/workflows/pfizer-news-monitor.yml`: scheduled GitHub Actions workflow
+- `.github/workflows/pfizer-news-monitor.yml`: manually triggered GitHub Actions workflow
 - `scripts/pfizer_news_monitor.py`: fetches monitored pages, filters items published on or after `2026-04-01`, translates titles when practical, and generates the Word document
-- `.state/pfizer_news_seen.json`: stores slot state for schedule deduplication
+- `.state/pfizer_news_seen.json`: stores the latest scan metadata
 
 ## Manual Test
 
-You can trigger the workflow manually from the GitHub Actions page. Manual runs bypass the schedule window.
+You can trigger the workflow manually from the GitHub Actions page.
 
 To test locally without generating a Word document or changing the saved state:
 
