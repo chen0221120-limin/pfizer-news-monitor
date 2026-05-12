@@ -28,11 +28,11 @@ STATE_PATH = Path(".state/pfizer_news_seen.json")
 REPORT_DIR = Path("reports")
 REPORT_PREFIX = "gi-oncology-monitor"
 
-DEFAULT_TIMEOUT = 12
-DEFAULT_RETRIES = 2
-MAX_PAGES_PER_COMPANY = 28
-MAX_LINKS_FROM_PAGE = 18
-MAX_WORKERS = 8
+DEFAULT_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT_SECONDS", "5"))
+DEFAULT_RETRIES = int(os.getenv("REQUEST_RETRIES", "1"))
+MAX_PAGES_PER_COMPANY = int(os.getenv("MAX_PAGES_PER_COMPANY", "10"))
+MAX_LINKS_FROM_PAGE = int(os.getenv("MAX_LINKS_FROM_PAGE", "5"))
+MAX_WORKERS = int(os.getenv("MAX_WORKERS", "24"))
 
 LINK_HINTS = (
     "news",
@@ -87,6 +87,14 @@ class Finding:
     matched_trials: list[str] = field(default_factory=list)
     matched_context: list[str] = field(default_factory=list)
     reason: str = ""
+    evidence: str = ""
+
+
+@dataclass(frozen=True)
+class TextBlock:
+    text: str
+    tag: str
+    url: str | None = None
 
 
 @dataclass
@@ -228,6 +236,44 @@ class LinkParser(HTMLParser):
         self._current_href = None
 
 
+class TextBlockParser(HTMLParser):
+    BLOCK_TAGS = {"a", "h1", "h2", "h3", "h4", "p", "li", "time"}
+
+    def __init__(self, base_url: str, roots: tuple[str, ...]) -> None:
+        super().__init__(convert_charrefs=True)
+        self.base_url = base_url
+        self.roots = roots
+        self.blocks: list[TextBlock] = []
+        self._stack: list[tuple[str, str | None, list[str]]] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        tag = tag.lower()
+        if tag not in self.BLOCK_TAGS:
+            return
+        href = dict(attrs).get("href") if tag == "a" else None
+        url = normalize_url(self.base_url, href) if href else None
+        self._stack.append((tag, url, []))
+
+    def handle_data(self, data: str) -> None:
+        if self._stack:
+            self._stack[-1][2].append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        tag = tag.lower()
+        if not self._stack:
+            return
+        current_tag, url, pieces = self._stack[-1]
+        if tag != current_tag:
+            return
+        self._stack.pop()
+        text = normalize_space(" ".join(pieces))
+        if len(text) < 8:
+            return
+        if url and not same_site_or_subsite(url, self.roots):
+            url = None
+        self.blocks.append(TextBlock(text=text, tag=current_tag, url=url))
+
+
 def strip_tags(value: str) -> str:
     value = re.sub(r"(?is)<script.*?</script>|<style.*?</style>", " ", value)
     value = re.sub(r"(?s)<[^>]+>", " ", value)
@@ -314,6 +360,84 @@ def find_keyword_hits(text: str, keywords: list[str]) -> list[str]:
     return hits
 
 
+def extract_text_blocks(page_text: str, page_url: str, roots: tuple[str, ...]) -> list[TextBlock]:
+    parser = TextBlockParser(page_url, roots)
+    parser.feed(page_text)
+    return parser.blocks
+
+
+def score_title_block(
+    block: TextBlock,
+    product_keywords: list[str],
+    trial_keywords: list[str],
+    target_keywords: list[str],
+    disease_keywords: list[str],
+    event_terms: tuple[str, ...],
+) -> int:
+    text = block.text
+    product_hits = find_keyword_hits(text, product_keywords)
+    trial_hits = find_keyword_hits(text, trial_keywords)
+    target_hits = find_keyword_hits(text, target_keywords)
+    disease_hits = find_keyword_hits(text, disease_keywords)
+    event_hits = find_keyword_hits(text, list(event_terms))
+    score = 0
+    score += 40 if product_hits else 0
+    score += 40 if trial_hits else 0
+    score += 18 if target_hits else 0
+    score += 12 if disease_hits else 0
+    score += 10 if event_hits else 0
+    score += 5 if parse_date_text(text) else 0
+    score += 8 if block.tag in {"a", "h1", "h2", "h3", "h4"} else 0
+    score += 8 if block.url else 0
+    if len(text) > 260:
+        score -= 12
+    if len(text) > 500:
+        score -= 25
+    return score
+
+
+def best_report_title(
+    company: CompanyConfig,
+    page_text: str,
+    page_url: str,
+    config: MonitorConfig,
+    fallback_title: str,
+) -> tuple[str, str, str]:
+    product_keywords = keywords_from(company.products)
+    trial_keywords = keywords_from(company.trial_ids)
+    target_keywords = keywords_from(company.targets)
+    disease_keywords = keywords_from(company.diseases) + list(config.gi_context_terms)
+    roots = root_urls(company.official_urls)
+    candidates = extract_text_blocks(page_text, page_url, roots)
+    if not candidates:
+        return fallback_title, page_url, ""
+
+    best_block: TextBlock | None = None
+    best_score = 0
+    for block in candidates:
+        score = score_title_block(
+            block,
+            product_keywords,
+            trial_keywords,
+            target_keywords,
+            disease_keywords,
+            config.event_terms,
+        )
+        if score > best_score:
+            best_score = score
+            best_block = block
+
+    if best_block is None or best_score < 18:
+        return fallback_title, page_url, ""
+
+    title = best_block.text
+    if len(title) > 220:
+        title = title[:217].rstrip() + "..."
+    report_url = best_block.url or page_url
+    evidence = best_block.text if len(best_block.text) <= 320 else best_block.text[:317].rstrip() + "..."
+    return title, report_url, evidence
+
+
 def is_in_scan_window(published_on: date, start_date: date, end_date: date) -> bool:
     return start_date <= published_on <= end_date
 
@@ -345,21 +469,24 @@ def evaluate_page(
     if not product_or_trial_hit and not new_target_gi_clinical_hit:
         return None
 
+    report_title, report_url, evidence = best_report_title(company, page_text, page_url, config, title)
+
     reason_parts = []
     if product_or_trial_hit:
         reason_parts.append("命中已关注产品/临床试验")
     if new_target_gi_clinical_hit:
-        reason_parts.append("命中GI肿瘤相关靶点和临床事件")
+        reason_parts.append("命中GI肿瘤相关靶点和临床/R&D事件")
 
     return Finding(
         company=company.company,
-        title=title,
-        url=page_url,
+        title=report_title,
+        url=report_url,
         published_on=published_on,
         matched_products=product_hits[:8],
         matched_targets=target_hits[:8],
         matched_trials=trial_hits[:6],
         matched_context=(disease_hits + event_hits)[:10],
+        evidence=evidence,
         reason="；".join(reason_parts),
     )
 
@@ -463,7 +590,7 @@ def scan_all(config: MonitorConfig, max_workers: int) -> tuple[list[Finding], li
 
     results.sort(key=lambda item: item.company.lower())
     findings = [finding for result in results for finding in result.findings]
-    findings.sort(key=lambda item: (item.company.lower(), item.published_on, item.title.lower()), reverse=False)
+    findings.sort(key=lambda item: (item.company.lower(), -item.published_on.toordinal(), item.title.lower()))
     return findings, results
 
 
@@ -521,12 +648,13 @@ def build_document_xml(
             body.extend(
                 [
                     paragraph_xml(f"发布日期：{finding.published_on.isoformat()}"),
-                    paragraph_xml(f"标题：{finding.title}"),
+                    paragraph_xml(f"新闻标题/命中条目：{finding.title}"),
                     paragraph_xml(f"命中原因：{finding.reason}"),
                     paragraph_xml(f"命中产品：{format_list(finding.matched_products)}"),
                     paragraph_xml(f"命中靶点：{format_list(finding.matched_targets)}"),
                     paragraph_xml(f"命中试验编号：{format_list(finding.matched_trials)}"),
                     paragraph_xml(f"相关上下文：{format_list(finding.matched_context)}"),
+                    paragraph_xml(f"命中片段：{finding.evidence or finding.title}"),
                     hyperlink_paragraph_xml("网页地址", finding.url, f"rId{rel_index}"),
                 ]
             )
