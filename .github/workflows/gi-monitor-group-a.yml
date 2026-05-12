@@ -1,0 +1,54 @@
+name: GI Monitor Group A
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Scan company group A
+        env:
+          MAX_WORKERS: "10"
+          MAX_PAGES_PER_COMPANY: "42"
+          MAX_ENTRY_PAGES_PER_COMPANY: "18"
+          MAX_ARTICLE_PAGES_PER_COMPANY: "24"
+          MAX_LINKS_FROM_PAGE: "24"
+          REQUEST_TIMEOUT_SECONDS: "12"
+          REQUEST_RETRIES: "2"
+        run: >-
+          python scripts/pfizer_news_monitor.py
+          --company-group-count 2
+          --company-group-index 1
+          --state .state/pfizer_news_seen_group_a.json
+          --report-prefix gi-oncology-monitor-group-a
+
+      - name: Upload Word document
+        uses: actions/upload-artifact@v4
+        with:
+          name: news-monitor-report-group-a
+          path: reports/gi-oncology-monitor-group-a-*.docx
+          if-no-files-found: ignore
+
+      - name: Commit monitor state
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin "${GITHUB_REF_NAME}"
+          git add .state/pfizer_news_seen_group_a.json
+          git diff --cached --quiet || git commit -m "Update GI oncology monitor state group A"
+          git pull --rebase --autostash origin "${GITHUB_REF_NAME}"
+          git push
