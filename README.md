@@ -1,27 +1,57 @@
-# Pharma News Monitor
+# GI Oncology Competitor Monitor
 
-This project scans the following news pages on GitHub Actions:
+This project runs a manual GitHub Actions workflow that scans official company websites for GI oncology R&D updates.
 
-- [Pfizer Newsroom](https://www.pfizer.com/newsroom)
-- [AstraZeneca Press Releases](https://www.astrazeneca.com/media-centre/press-releases.html)
-- [Roche Media Releases](https://www.roche.com/media/releases)
-- [Innovent News](https://www.innoventbio.com/#/news)
+The monitor is driven by:
+
+```text
+config/gi_monitor_config.json
+```
+
+The configuration was generated from the curated Excel tracker and includes:
+
+- company names
+- official website URLs
+- monitored diseases
+- targets
+- company products
+- clinical trial identifiers
 
 ## Trigger
 
-This workflow is now manual-only.
+The workflow is manual-only.
 
-Use GitHub Actions and click `Run workflow` whenever you want to run a scan and generate a Word report.
+Open GitHub Actions, select `Pfizer News Monitor`, and click `Run workflow` when you want to generate a new report.
+
+## Scan Logic
+
+Each run scans the last 3 calendar days, based on Beijing time.
+
+For each configured company, the script checks the configured official websites plus common content areas such as:
+
+- news and newsroom pages
+- media and press release pages
+- pipeline pages
+- R&D pages
+- clinical trial pages
+- product pages
+
+A page is included in the report when it has a recognized publication date within the last 3 days and matches either:
+
+- an already monitored company product or clinical trial identifier
+- an interested target plus GI oncology context plus a clinical/R&D event term
+
+If a company website cannot be reached or no readable official content can be found, the Word report lists that company in a separate section.
 
 ## Output
 
-For every successful scan, the workflow generates a local Microsoft Word document in:
+Every successful run generates a Microsoft Word document in:
 
 ```text
-reports/news-monitor-YYYYMMDD-HHMMSS.docx
+reports/gi-oncology-monitor-YYYYMMDD-HHMMSS.docx
 ```
 
-The workflow also uploads the file as a GitHub Actions artifact:
+The workflow uploads the file as a GitHub Actions artifact:
 
 ```text
 news-monitor-report
@@ -30,43 +60,31 @@ news-monitor-report
 The report includes:
 
 - scan time
-- cutoff date (`2026-04-01`)
-- scan result summary
-- every monitored item published on or after `2026-04-01`
-- grouped by company
-- newest-to-oldest ordering within each company
-- source site, publication date, Chinese title, English title, and article URL
-
-The report is no longer limited to "new since last scan". Each scan rebuilds the report from the live page data and includes all qualifying items published on or after `2026-04-01`.
+- 3-day scan window
+- number of monitored companies
+- number of matched findings
+- matched company updates grouped by company
+- matched products, targets, trial identifiers, and context terms
+- companies whose official content could not be read
 
 ## State
 
-The monitor stores scan state in:
+The monitor stores the latest scan metadata in:
 
 ```text
 .state/pfizer_news_seen.json
 ```
 
-This file now keeps the latest scan time and the active report cutoff date.
+## Local Test
 
-## Files
-
-- `.github/workflows/pfizer-news-monitor.yml`: manually triggered GitHub Actions workflow
-- `scripts/pfizer_news_monitor.py`: fetches monitored pages, filters items published on or after `2026-04-01`, translates titles when practical, and generates the Word document
-- `.state/pfizer_news_seen.json`: stores the latest scan metadata
-
-## Manual Test
-
-You can trigger the workflow manually from the GitHub Actions page.
-
-To test locally without generating a Word document or changing the saved state:
+To test locally without generating a Word document or changing state:
 
 ```bash
 python scripts/pfizer_news_monitor.py --dry-run
 ```
 
-To skip online translation during a local test:
+To reduce or increase concurrency:
 
 ```bash
-DISABLE_TRANSLATION=true python scripts/pfizer_news_monitor.py --dry-run
+python scripts/pfizer_news_monitor.py --dry-run --max-workers 4
 ```

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Monitor selected pharma newsroom pages and generate a Word report for each scan."""
+"""Monitor GI oncology competitor websites and generate a Word report."""
 
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import html
 import http.client
 import json
@@ -11,46 +12,90 @@ import os
 import re
 import time
 import zipfile
-from collections import OrderedDict
-from dataclasses import dataclass
-from datetime import date, datetime
+from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta
 from html.parser import HTMLParser
 from pathlib import Path
-from urllib.error import URLError
-from urllib.parse import quote, urljoin, urlparse
+from urllib.error import HTTPError, URLError
+from urllib.parse import urljoin, urlparse
 from urllib.request import Request, urlopen
 from xml.sax.saxutils import escape
 from zoneinfo import ZoneInfo
 
 
-PFIZER_URL = "https://www.pfizer.com/newsroom"
-ASTRAZENECA_URL = "https://www.astrazeneca.com/media-centre.html"
-ROCHE_SITEMAP_URL = "https://www.roche.com/sitemap-0.xml"
-INNOVENT_API_URL = "https://www.innoventbio.com/api/news"
-INNOVENT_NEWS_URL_TEMPLATE = "https://www.innoventbio.com/#/news/{id}"
-
+CONFIG_PATH = Path("config/gi_monitor_config.json")
 STATE_PATH = Path(".state/pfizer_news_seen.json")
 REPORT_DIR = Path("reports")
-REPORT_PREFIX = "news-monitor"
-REPORT_CUTOFF_DATE = date(2026, 4, 1)
+REPORT_PREFIX = "gi-oncology-monitor"
 
-PFIZER_PRESS_RELEASE_MARKER = "/news/press-release/"
-PFIZER_MAX_PAGES = 12
-ASTRAZENECA_MARKER = "/media-centre/press-releases/"
-ROCHE_RELEASE_PREFIX = "https://www.roche.com/media/releases/"
-ROCHE_MAX_ITEMS = 200
-SLOT_START_HOURS_BJT = (9, 12, 17)
-SLOT_WINDOW_HOURS = 2
-EXIT_OUTSIDE_WINDOW = 2
-EXIT_ALREADY_SCANNED = 3
+DEFAULT_TIMEOUT = 12
+DEFAULT_RETRIES = 2
+MAX_PAGES_PER_COMPANY = 28
+MAX_LINKS_FROM_PAGE = 18
+MAX_WORKERS = 8
+
+LINK_HINTS = (
+    "news",
+    "press",
+    "media",
+    "release",
+    "pipeline",
+    "clinical",
+    "trial",
+    "study",
+    "oncology",
+    "cancer",
+    "tumor",
+    "gastric",
+    "colorectal",
+    "pancreatic",
+    "biliary",
+    "esophageal",
+    "hcc",
+    "research",
+    "development",
+)
 
 
 @dataclass(frozen=True)
-class NewsItem:
-    source: str
+class CompanyConfig:
+    company: str
+    official_urls: tuple[str, ...]
+    diseases: tuple[str, ...]
+    targets: tuple[str, ...]
+    products: tuple[str, ...]
+    trial_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class MonitorConfig:
+    scan_days: int
+    event_terms: tuple[str, ...]
+    gi_context_terms: tuple[str, ...]
+    common_paths: tuple[str, ...]
+    companies: tuple[CompanyConfig, ...]
+
+
+@dataclass
+class Finding:
+    company: str
     title: str
     url: str
     published_on: date
+    matched_products: list[str] = field(default_factory=list)
+    matched_targets: list[str] = field(default_factory=list)
+    matched_trials: list[str] = field(default_factory=list)
+    matched_context: list[str] = field(default_factory=list)
+    reason: str = ""
+
+
+@dataclass
+class CompanyScanResult:
+    company: str
+    official_urls: tuple[str, ...]
+    pages_checked: int = 0
+    findings: list[Finding] = field(default_factory=list)
+    unavailable_reason: str | None = None
 
 
 def bjt_now() -> datetime:
@@ -61,12 +106,45 @@ def scan_time_label() -> str:
     return bjt_now().strftime("%Y-%m-%d %H:%M:%S CST")
 
 
-def fetch_text(url: str, timeout: int = 30, retries: int = 3) -> str:
+def normalize_space(value: str) -> str:
+    return " ".join(html.unescape(str(value or "")).replace("\xa0", " ").split())
+
+
+def normalize_token(value: str) -> str:
+    value = normalize_space(value)
+    value = value.replace("＋", "+").replace("／", "/").replace("（", "(").replace("）", ")")
+    return value.strip(" ,;|")
+
+
+def load_config(path: Path) -> MonitorConfig:
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    companies = []
+    for item in raw.get("companies", []):
+        companies.append(
+            CompanyConfig(
+                company=item["company"],
+                official_urls=tuple(item.get("official_urls", [])),
+                diseases=tuple(item.get("diseases", [])),
+                targets=tuple(item.get("targets", [])),
+                products=tuple(item.get("products", [])),
+                trial_ids=tuple(item.get("trial_ids", [])),
+            )
+        )
+    return MonitorConfig(
+        scan_days=int(raw.get("scan_days", 3)),
+        event_terms=tuple(raw.get("event_terms", [])),
+        gi_context_terms=tuple(raw.get("gi_context_terms", [])),
+        common_paths=tuple(raw.get("common_paths", [])),
+        companies=tuple(companies),
+    )
+
+
+def fetch_text(url: str, timeout: int = DEFAULT_TIMEOUT, retries: int = DEFAULT_RETRIES) -> str:
     request = Request(
         url,
         headers={
             "User-Agent": (
-                "Mozilla/5.0 (compatible; PharmaNewsMonitor/1.0; "
+                "Mozilla/5.0 (compatible; GIOncologyMonitor/2.0; "
                 "+https://github.com/actions)"
             ),
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -78,505 +156,315 @@ def fetch_text(url: str, timeout: int = 30, retries: int = 3) -> str:
         try:
             with urlopen(request, timeout=timeout) as response:
                 charset = response.headers.get_content_charset() or "utf-8"
-                return response.read().decode(charset, errors="replace")
+                raw = response.read()
+                return raw.decode(charset, errors="replace")
         except http.client.IncompleteRead as exc:
             if exc.partial:
                 return exc.partial.decode("utf-8", errors="replace")
             last_error = exc
-        except (OSError, URLError) as exc:
+        except (HTTPError, OSError, URLError) as exc:
             last_error = exc
         if attempt < retries:
-            time.sleep(attempt * 2)
+            time.sleep(attempt)
     assert last_error is not None
     raise last_error
-
-
-def fetch_json(url: str, timeout: int = 30) -> dict:
-    request = Request(
-        url,
-        headers={
-            "User-Agent": "Mozilla/5.0 (compatible; PharmaNewsMonitor/1.0; +https://github.com/actions)",
-            "Accept": "application/json,text/plain,*/*",
-        },
-    )
-    with urlopen(request, timeout=timeout) as response:
-        return json.loads(response.read().decode("utf-8"))
 
 
 def normalize_url(base_url: str, href: str) -> str:
     absolute = urljoin(base_url, href)
     parsed = urlparse(absolute)
+    if parsed.scheme not in {"http", "https"}:
+        return ""
     return parsed._replace(query="", fragment="").geturl()
 
 
-def clean_title(title: str) -> str:
-    cleaned = " ".join(html.unescape(title).split())
-    return cleaned.strip(" -|")
+def same_site_or_subsite(candidate: str, roots: tuple[str, ...]) -> bool:
+    candidate_host = urlparse(candidate).netloc.lower()
+    for root in roots:
+        root_host = urlparse(root).netloc.lower()
+        if candidate_host == root_host or candidate_host.endswith("." + root_host):
+            return True
+    return False
 
 
-def is_pfizer_press_release(url: str) -> bool:
-    parsed = urlparse(url)
-    if parsed.netloc and parsed.netloc != "www.pfizer.com":
-        return False
-    return PFIZER_PRESS_RELEASE_MARKER in parsed.path
+def likely_useful_link(url: str) -> bool:
+    path = urlparse(url).path.lower()
+    return any(hint in path for hint in LINK_HINTS)
+
+
+class LinkParser(HTMLParser):
+    def __init__(self, base_url: str, roots: tuple[str, ...]) -> None:
+        super().__init__(convert_charrefs=True)
+        self.base_url = base_url
+        self.roots = roots
+        self.links: list[str] = []
+        self._current_href: str | None = None
+        self._current_text: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() != "a":
+            return
+        href = dict(attrs).get("href")
+        if href:
+            self._current_href = href
+            self._current_text = []
+
+    def handle_data(self, data: str) -> None:
+        if self._current_href is not None:
+            self._current_text.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() != "a" or self._current_href is None:
+            return
+        url = normalize_url(self.base_url, self._current_href)
+        text = normalize_space(" ".join(self._current_text)).lower()
+        if (
+            url
+            and same_site_or_subsite(url, self.roots)
+            and (likely_useful_link(url) or any(hint in text for hint in LINK_HINTS))
+            and url not in self.links
+        ):
+            self.links.append(url)
+        self._current_href = None
+
+
+def strip_tags(value: str) -> str:
+    value = re.sub(r"(?is)<script.*?</script>|<style.*?</style>", " ", value)
+    value = re.sub(r"(?s)<[^>]+>", " ", value)
+    return normalize_space(value)
+
+
+def extract_title_from_page(page_text: str, fallback_url: str) -> str:
+    patterns = (
+        r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']',
+        r'<meta[^>]+name=["\']title["\'][^>]+content=["\']([^"\']+)["\']',
+        r"<title[^>]*>(.*?)</title>",
+        r"<h1[^>]*>(.*?)</h1>",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, page_text, flags=re.IGNORECASE | re.DOTALL)
+        if match:
+            title = strip_tags(match.group(1)).strip(" -|")
+            if title:
+                return title
+    slug = urlparse(fallback_url).path.rstrip("/").rsplit("/", 1)[-1]
+    return normalize_space(slug.replace("-", " ").replace("_", " "))
 
 
 def parse_date_text(value: str | None) -> date | None:
     if not value:
         return None
-
-    text = " ".join(str(value).replace("\xa0", " ").split()).strip(" ,.-")
-    if not text:
-        return None
-
-    text = re.sub(r"(?i)^published\s+", "", text)
-
-    iso_match = re.search(r"(?<!\d)(\d{4}-\d{2}-\d{2})(?!\d)", text)
-    if iso_match:
-        try:
-            return datetime.strptime(iso_match.group(1), "%Y-%m-%d").date()
-        except ValueError:
-            pass
-
-    dotted_match = re.search(r"(?<!\d)(\d{2}\.\d{2}\.\d{4})(?!\d)", text)
-    if dotted_match:
-        try:
-            return datetime.strptime(dotted_match.group(1), "%m.%d.%Y").date()
-        except ValueError:
-            pass
-
-    month_match = re.search(
-        r"(?<!\d)(\d{1,2}\s+[A-Za-z]+\s+\d{4})(?!\d)",
-        text,
+    text = normalize_space(value).strip(" ,.-")
+    date_patterns = (
+        ("%Y-%m-%d", r"(?<!\d)(\d{4}-\d{2}-\d{2})(?!\d)"),
+        ("%Y/%m/%d", r"(?<!\d)(\d{4}/\d{2}/\d{2})(?!\d)"),
+        ("%m.%d.%Y", r"(?<!\d)(\d{2}\.\d{2}\.\d{4})(?!\d)"),
+        ("%d %B %Y", r"(?<!\d)(\d{1,2}\s+[A-Za-z]+\s+\d{4})(?!\d)"),
+        ("%B %d, %Y", r"(?<!\w)([A-Za-z]+\s+\d{1,2},\s+\d{4})(?!\w)"),
+        ("%Y%m%d", r"(?<!\d)(\d{8})(?!\d)"),
     )
-    if month_match:
+    for fmt, pattern in date_patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if not match:
+            continue
         try:
-            return datetime.strptime(month_match.group(1), "%d %B %Y").date()
+            return datetime.strptime(match.group(1), fmt).date()
         except ValueError:
-            pass
-
-    slash_match = re.search(r"(?<!\d)(\d{4}/\d{2}/\d{2})(?!\d)", text)
-    if slash_match:
-        try:
-            return datetime.strptime(slash_match.group(1), "%Y/%m/%d").date()
-        except ValueError:
-            pass
-
-    compact_match = re.search(r"(?<!\d)(\d{8})(?!\d)", text)
-    if compact_match:
-        try:
-            return datetime.strptime(compact_match.group(1), "%Y%m%d").date()
-        except ValueError:
-            pass
-
+            continue
     return None
 
 
-def extract_title_from_page(html_text: str, fallback_url: str) -> str:
-    patterns = (
-        r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']',
-        r'<meta[^>]+name=["\']title["\'][^>]+content=["\']([^"\']+)["\']',
-        r"<title>(.*?)</title>",
-        r"<h1[^>]*>(.*?)</h1>",
-    )
-    for pattern in patterns:
-        match = re.search(pattern, html_text, flags=re.IGNORECASE | re.DOTALL)
-        if not match:
-            continue
-        title = clean_title(re.sub(r"<[^>]+>", " ", match.group(1)))
-        if title:
-            parts = [part.strip() for part in title.split("|")]
-            if len(parts) > 1 and parts[0].lower() in {"roche", "astrazeneca", "pfizer"}:
-                return clean_title(parts[-1])
-            return title
-
-    slug = fallback_url.rstrip("/").rsplit("/", 1)[-1]
-    return clean_title(slug.replace("-", " "))
-
-
-def extract_date_from_page(html_text: str) -> date | None:
+def extract_date_from_page(page_text: str) -> date | None:
     patterns = (
         r'<meta[^>]+property=["\']article:published_time["\'][^>]+content=["\']([^"\']+)["\']',
         r'<meta[^>]+name=["\']publishdate["\'][^>]+content=["\']([^"\']+)["\']',
         r'<meta[^>]+name=["\']date["\'][^>]+content=["\']([^"\']+)["\']',
-        r'(?i)published[^<]{0,40}(\d{1,2}\s+[A-Za-z]+\s+\d{4})',
-        r'(\d{2}\.\d{2}\.\d{4})',
-        r'(\d{4}-\d{2}-\d{2})',
+        r'<time[^>]+datetime=["\']([^"\']+)["\']',
+        r"(?i)published[^<]{0,80}(\d{1,2}\s+[A-Za-z]+\s+\d{4})",
+        r"(?i)date[^<]{0,80}(\d{4}-\d{2}-\d{2})",
+        r"(\d{4}-\d{2}-\d{2})",
+        r"(\d{4}/\d{2}/\d{2})",
+        r"([A-Za-z]+\s+\d{1,2},\s+\d{4})",
     )
     for pattern in patterns:
-        match = re.search(pattern, html_text, flags=re.IGNORECASE | re.DOTALL)
-        if not match:
-            continue
-        parsed = parse_date_text(match.group(1))
-        if parsed is not None:
-            return parsed
+        match = re.search(pattern, page_text, flags=re.IGNORECASE | re.DOTALL)
+        if match:
+            parsed = parse_date_text(match.group(1))
+            if parsed is not None:
+                return parsed
     return None
 
 
-class PfizerPressReleaseParser(HTMLParser):
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self._current_href: str | None = None
-        self._current_text: list[str] = []
-        self._current_date: date | None = None
-        self._last_seen_date: date | None = None
-        self._seen_urls: set[str] = set()
-        self.items: list[NewsItem] = []
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag.lower() != "a":
-            return
-        href = dict(attrs).get("href")
-        if href:
-            self._current_href = href
-            self._current_text = []
-            self._current_date = self._last_seen_date
-
-    def handle_data(self, data: str) -> None:
-        parsed = parse_date_text(data)
-        if parsed is not None:
-            self._last_seen_date = parsed
-            if self._current_href is None:
-                self._current_date = parsed
-        if self._current_href is not None:
-            self._current_text.append(data)
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag.lower() != "a" or self._current_href is None:
-            return
-        title = clean_title("".join(self._current_text))
-        url = normalize_url(PFIZER_URL, self._current_href)
-        published_on = self._current_date
-        if title and published_on and is_pfizer_press_release(url) and url not in self._seen_urls:
-            self._seen_urls.add(url)
-            self.items.append(
-                NewsItem(
-                    source="Pfizer",
-                    title=title,
-                    url=url,
-                    published_on=published_on,
-                )
-            )
-        self._current_href = None
-        self._current_text = []
-        self._current_date = None
+def keywords_from(values: tuple[str, ...]) -> list[str]:
+    out: list[str] = []
+    for value in values:
+        for part in re.split(r"[;|,，、]\s*", str(value)):
+            part = normalize_token(part)
+            if len(part) >= 2 and part not in out:
+                out.append(part)
+    return out
 
 
-def fetch_pfizer_items() -> list[NewsItem]:
-    items: list[NewsItem] = []
-    seen_urls: set[str] = set()
-    reached_cutoff = False
-
-    for page_number in range(PFIZER_MAX_PAGES):
-        page_url = PFIZER_URL if page_number == 0 else f"{PFIZER_URL}?page={page_number}"
-        parser = PfizerPressReleaseParser()
-        parser.feed(fetch_text(page_url))
-        page_items = [item for item in parser.items if item.url not in seen_urls]
-        if not page_items:
-            break
-
-        for item in page_items:
-            seen_urls.add(item.url)
-            if item.published_on >= REPORT_CUTOFF_DATE:
-                items.append(item)
-            else:
-                reached_cutoff = True
-
-        if reached_cutoff:
-            break
-
-    return items
+def find_keyword_hits(text: str, keywords: list[str]) -> list[str]:
+    lower = text.lower()
+    hits = []
+    for keyword in keywords:
+        if keyword and keyword.lower() in lower and keyword not in hits:
+            hits.append(keyword)
+    return hits
 
 
-class AstraZenecaLatestPressReleaseParser(HTMLParser):
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self._current_href: str | None = None
-        self._current_text: list[str] = []
-        self._seen_urls: set[str] = set()
-        self.items: list[NewsItem] = []
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag.lower() != "a":
-            return
-        href = dict(attrs).get("href")
-        if href:
-            self._current_href = href
-            self._current_text = []
-
-    def handle_data(self, data: str) -> None:
-        if self._current_href is not None:
-            self._current_text.append(data)
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag.lower() != "a" or self._current_href is None:
-            return
-
-        url = normalize_url(ASTRAZENECA_URL, self._current_href)
-        parsed = urlparse(url)
-        text = clean_title("".join(self._current_text))
-        date_match = re.search(r"(.+?)\s+(\d{1,2}\s+[A-Za-z]+\s+\d{4})$", text)
-        if (
-            parsed.netloc == "www.astrazeneca.com"
-            and ASTRAZENECA_MARKER in parsed.path
-            and url not in self._seen_urls
-            and date_match
-        ):
-            published_on = parse_date_text(date_match.group(2))
-            title = clean_title(date_match.group(1))
-            if published_on is not None and title:
-                self._seen_urls.add(url)
-                self.items.append(
-                    NewsItem(
-                        source="AstraZeneca",
-                        title=title,
-                        url=url,
-                        published_on=published_on,
-                    )
-                )
-
-        self._current_href = None
-        self._current_text = []
+def is_in_scan_window(published_on: date, start_date: date, end_date: date) -> bool:
+    return start_date <= published_on <= end_date
 
 
-def fetch_astrazeneca_items() -> list[NewsItem]:
-    parser = AstraZenecaLatestPressReleaseParser()
-    parser.feed(fetch_text(ASTRAZENECA_URL))
-    items = [item for item in parser.items if item.published_on >= REPORT_CUTOFF_DATE]
-    return items
-
-
-def roche_sort_key(url: str) -> tuple[str, str]:
-    match = re.search(r"(\d{4}-\d{2}-\d{2})", url)
-    return (match.group(1) if match else "", url)
-
-
-def fetch_roche_urls() -> list[str]:
-    xml_text = fetch_text(ROCHE_SITEMAP_URL)
-    url_matches = re.findall(r"https://www\.roche\.com/media/releases/[^<]+", xml_text)
-
-    urls = []
-    seen_urls: set[str] = set()
-    for url in sorted(url_matches, key=roche_sort_key, reverse=True):
-        normalized = normalize_url(ROCHE_RELEASE_PREFIX, url)
-        if normalized in seen_urls:
-            continue
-        seen_urls.add(normalized)
-        urls.append(normalized)
-        if len(urls) >= ROCHE_MAX_ITEMS:
-            break
-
-    if not urls:
-        raise RuntimeError("No Roche media release URLs were found in the sitemap.")
-    return urls
-
-
-def fetch_roche_items() -> list[NewsItem]:
-    items: list[NewsItem] = []
-    for url in fetch_roche_urls():
-        published_on = parse_date_text(url)
-        if published_on is None or published_on < REPORT_CUTOFF_DATE:
-            continue
-        page_html = fetch_text(url)
-        title = extract_title_from_page(page_html, url)
-        items.append(
-            NewsItem(
-                source="Roche",
-                title=title,
-                url=url,
-                published_on=published_on,
-            )
-        )
-    return items
-
-
-def candidate_date_values(entry: object) -> list[str]:
-    candidates: list[str] = []
-    if isinstance(entry, dict):
-        preferred_keys = (
-            "publishTime",
-            "publishDate",
-            "publishedAt",
-            "published_at",
-            "releaseDate",
-            "release_date",
-            "createTime",
-            "createdAt",
-            "created_at",
-            "date",
-            "newsDate",
-            "showTime",
-            "time",
-        )
-        for key in preferred_keys:
-            value = entry.get(key)
-            if value not in (None, ""):
-                candidates.append(str(value))
-        for value in entry.values():
-            candidates.extend(candidate_date_values(value))
-    elif isinstance(entry, list):
-        for value in entry:
-            candidates.extend(candidate_date_values(value))
-    elif isinstance(entry, (str, int, float)):
-        candidates.append(str(entry))
-    return candidates
-
-
-def extract_innovent_date(entry: dict, detail_url: str) -> date | None:
-    for candidate in candidate_date_values(entry):
-        parsed = parse_date_text(candidate)
-        if parsed is not None:
-            return parsed
-
-    try:
-        page_html = fetch_text(detail_url)
-    except (OSError, URLError):
+def evaluate_page(
+    company: CompanyConfig,
+    page_url: str,
+    page_text: str,
+    config: MonitorConfig,
+    start_date: date,
+    end_date: date,
+) -> Finding | None:
+    published_on = extract_date_from_page(page_text)
+    if published_on is None or not is_in_scan_window(published_on, start_date, end_date):
         return None
-    return extract_date_from_page(page_html)
 
+    title = extract_title_from_page(page_text, page_url)
+    plain_text = strip_tags(page_text)
+    combined = f"{title}\n{plain_text}"
 
-def fetch_innovent_items() -> list[NewsItem]:
-    payload = fetch_json(INNOVENT_API_URL)
-    raw_items = payload.get("data", [])
-    items: list[NewsItem] = []
-    for entry in raw_items:
-        if not isinstance(entry, dict):
-            continue
-        news_id = entry.get("id")
-        title = clean_title(str(entry.get("title", "")).strip())
-        if not news_id or not title:
-            continue
+    product_hits = find_keyword_hits(combined, keywords_from(company.products))
+    trial_hits = find_keyword_hits(combined, keywords_from(company.trial_ids))
+    target_hits = find_keyword_hits(combined, keywords_from(company.targets))
+    disease_hits = find_keyword_hits(combined, keywords_from(company.diseases) + list(config.gi_context_terms))
+    event_hits = find_keyword_hits(combined, list(config.event_terms))
 
-        url = INNOVENT_NEWS_URL_TEMPLATE.format(id=news_id)
-        published_on = extract_innovent_date(entry, url)
-        if published_on is None or published_on < REPORT_CUTOFF_DATE:
-            continue
+    product_or_trial_hit = bool(product_hits or trial_hits)
+    new_target_gi_clinical_hit = bool(target_hits and disease_hits and event_hits)
+    if not product_or_trial_hit and not new_target_gi_clinical_hit:
+        return None
 
-        items.append(
-            NewsItem(
-                source="Innovent",
-                title=title,
-                url=url,
-                published_on=published_on,
-            )
-        )
+    reason_parts = []
+    if product_or_trial_hit:
+        reason_parts.append("命中已关注产品/临床试验")
+    if new_target_gi_clinical_hit:
+        reason_parts.append("命中GI肿瘤相关靶点和临床事件")
 
-    return items
-
-
-def load_state(path: Path) -> tuple[bool, dict]:
-    if not path.exists():
-        return False, {"last_slot_key": None}
-
-    raw_state = json.loads(path.read_text(encoding="utf-8"))
-    return True, {
-        "last_scan_bjt": raw_state.get("last_scan_bjt"),
-        "last_slot_key": raw_state.get("last_slot_key"),
-    }
-
-
-def save_state(path: Path, last_slot_key: str | None) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "last_scan_bjt": scan_time_label(),
-        "last_slot_key": last_slot_key,
-        "report_cutoff_date": REPORT_CUTOFF_DATE.isoformat(),
-    }
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-
-
-def translate_title(title: str) -> str:
-    if os.getenv("DISABLE_TRANSLATION", "").lower() in {"1", "true", "yes"}:
-        return title
-
-    endpoint = (
-        "https://api.mymemory.translated.net/get"
-        f"?q={quote(title)}&langpair=en%7Czh-CN"
+    return Finding(
+        company=company.company,
+        title=title,
+        url=page_url,
+        published_on=published_on,
+        matched_products=product_hits[:8],
+        matched_targets=target_hits[:8],
+        matched_trials=trial_hits[:6],
+        matched_context=(disease_hits + event_hits)[:10],
+        reason="；".join(reason_parts),
     )
-    try:
-        request = Request(endpoint, headers={"User-Agent": "PharmaNewsMonitor/1.0"})
-        with urlopen(request, timeout=20) as response:
-            data = json.loads(response.read().decode("utf-8"))
-        translated = data.get("responseData", {}).get("translatedText", "").strip()
-        return html.unescape(translated) if translated else title
-    except (OSError, URLError, json.JSONDecodeError):
-        return title
 
 
-def build_translated_titles(items: list[NewsItem]) -> dict[str, str]:
-    title_cache: dict[str, str] = {}
-    translated: dict[str, str] = {}
-    for item in items:
-        if item.title not in title_cache:
-            title_cache[item.title] = translate_title(item.title)
-        translated[item.url] = title_cache[item.title]
-    return translated
+def root_urls(urls: tuple[str, ...]) -> tuple[str, ...]:
+    roots = []
+    for url in urls:
+        parsed = urlparse(url)
+        if parsed.scheme and parsed.netloc:
+            root = f"{parsed.scheme}://{parsed.netloc}/"
+            if root not in roots:
+                roots.append(root)
+    return tuple(roots)
 
 
-def current_slot_key(now: datetime) -> str | None:
-    if now.weekday() > 4:
-        return None
-    for start_hour in SLOT_START_HOURS_BJT:
-        if start_hour <= now.hour < start_hour + SLOT_WINDOW_HOURS:
-            return now.strftime("%Y-%m-%d") + f"-{start_hour:02d}"
-    return None
+def candidate_urls(company: CompanyConfig, config: MonitorConfig) -> list[str]:
+    urls: list[str] = []
+    roots = root_urls(company.official_urls)
+    for url in company.official_urls:
+        if url and url not in urls:
+            urls.append(url)
+    for root in roots:
+        for path in config.common_paths:
+            candidate = urljoin(root, path.lstrip("/"))
+            if candidate not in urls:
+                urls.append(candidate)
+        sitemap = urljoin(root, "sitemap.xml")
+        if sitemap not in urls:
+            urls.append(sitemap)
+    return urls[:MAX_PAGES_PER_COMPANY]
 
 
-def should_force_scan() -> bool:
-    return os.getenv("FORCE_SCAN", "").lower() in {"1", "true", "yes"}
+def extract_links(page_url: str, page_text: str, roots: tuple[str, ...]) -> list[str]:
+    parser = LinkParser(page_url, roots)
+    parser.feed(page_text)
+    return parser.links[:MAX_LINKS_FROM_PAGE]
 
 
-def format_date(value: date) -> str:
-    return value.strftime("%Y-%m-%d")
+def scan_company(company: CompanyConfig, config: MonitorConfig, start_date: date, end_date: date) -> CompanyScanResult:
+    if not company.official_urls:
+        return CompanyScanResult(
+            company=company.company,
+            official_urls=company.official_urls,
+            unavailable_reason="未配置官网地址",
+        )
+
+    roots = root_urls(company.official_urls)
+    queue = candidate_urls(company, config)
+    seen_urls: set[str] = set()
+    pages_checked = 0
+    fetch_success = False
+    findings: list[Finding] = []
+
+    while queue and pages_checked < MAX_PAGES_PER_COMPANY:
+        url = queue.pop(0)
+        if not url or url in seen_urls:
+            continue
+        seen_urls.add(url)
+        try:
+            page_text = fetch_text(url)
+        except Exception:
+            continue
+        fetch_success = True
+        pages_checked += 1
+
+        if likely_useful_link(url) or url in company.official_urls:
+            finding = evaluate_page(company, url, page_text, config, start_date, end_date)
+            if finding and finding.url not in {item.url for item in findings}:
+                findings.append(finding)
+
+        for link in extract_links(url, page_text, roots):
+            if link not in seen_urls and link not in queue and len(queue) < MAX_PAGES_PER_COMPANY * 2:
+                queue.append(link)
+
+    unavailable_reason = None
+    if not fetch_success:
+        unavailable_reason = "官网无法访问，或未找到可读取的官网内容"
+
+    findings.sort(key=lambda item: (item.published_on, item.title.lower()), reverse=True)
+    return CompanyScanResult(
+        company=company.company,
+        official_urls=company.official_urls,
+        pages_checked=pages_checked,
+        findings=findings,
+        unavailable_reason=unavailable_reason,
+    )
 
 
-def group_items_by_source(items: list[NewsItem]) -> OrderedDict[str, list[NewsItem]]:
-    grouped: OrderedDict[str, list[NewsItem]] = OrderedDict()
-    source_order = ("Pfizer", "AstraZeneca", "Roche", "Innovent")
-    for source in source_order:
-        source_items = [
-            item
-            for item in items
-            if item.source == source
+def scan_all(config: MonitorConfig, max_workers: int) -> tuple[list[Finding], list[CompanyScanResult]]:
+    end_date = bjt_now().date()
+    start_date = end_date - timedelta(days=max(config.scan_days - 1, 0))
+    results: list[CompanyScanResult] = []
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [
+            executor.submit(scan_company, company, config, start_date, end_date)
+            for company in config.companies
         ]
-        if source_items:
-            grouped[source] = sorted(
-                source_items,
-                key=lambda item: (item.published_on, item.title.lower()),
-                reverse=True,
-            )
-    return grouped
+        for future in concurrent.futures.as_completed(futures):
+            results.append(future.result())
 
-
-def build_report_text(
-    items: list[NewsItem],
-    translated_titles: dict[str, str],
-    label: str,
-    summary_text: str,
-) -> str:
-    lines = [
-        f"扫描时间：{label}",
-        f"统计起点：{REPORT_CUTOFF_DATE.isoformat()}",
-        "",
-        f"扫描结果：{summary_text}",
-    ]
-    if not items:
-        return "\n".join(lines).strip() + "\n"
-
-    grouped = group_items_by_source(items)
-    overall_index = 1
-    for source, source_items in grouped.items():
-        lines.append("")
-        lines.append(f"{source}")
-        lines.append("-" * len(source))
-        for item in source_items:
-            lines.append(f"{overall_index}. 发布日期：{format_date(item.published_on)}")
-            lines.append(f"   中文标题：{translated_titles[item.url]}")
-            lines.append(f"   英文标题：{item.title}")
-            lines.append(f"   网页地址：{item.url}")
-            lines.append("")
-            overall_index += 1
-    return "\n".join(lines).strip() + "\n"
+    results.sort(key=lambda item: item.company.lower())
+    findings = [finding for result in results for finding in result.findings]
+    findings.sort(key=lambda item: (item.company.lower(), item.published_on, item.title.lower()), reverse=False)
+    return findings, results
 
 
 def paragraph_xml(text: str, style: str | None = None) -> str:
@@ -591,50 +479,72 @@ def paragraph_xml(text: str, style: str | None = None) -> str:
     )
 
 
-def hyperlink_paragraph_xml(text: str, rel_id: str) -> str:
+def hyperlink_paragraph_xml(label: str, url: str, rel_id: str) -> str:
     return (
         "<w:p>"
-        '<w:r><w:t xml:space="preserve">网页地址：</w:t></w:r>'
+        f'<w:r><w:t xml:space="preserve">{escape(label)}：</w:t></w:r>'
         f'<w:hyperlink r:id="{rel_id}" w:history="1">'
         '<w:r><w:rPr><w:rStyle w:val="Hyperlink"/></w:rPr>'
-        f'<w:t xml:space="preserve">{escape(text)}</w:t>'
+        f'<w:t xml:space="preserve">{escape(url)}</w:t>'
         "</w:r></w:hyperlink>"
         "</w:p>"
     )
 
 
+def format_list(values: list[str]) -> str:
+    return "；".join(values) if values else "未命中"
+
+
 def build_document_xml(
-    items: list[NewsItem],
-    translated_titles: dict[str, str],
+    findings: list[Finding],
+    results: list[CompanyScanResult],
     label: str,
-    summary_text: str,
+    start_date: date,
+    end_date: date,
 ) -> str:
-    body_parts = [
-        paragraph_xml("企业新闻监测报告", "Title"),
+    unavailable = [result for result in results if result.unavailable_reason]
+    body = [
+        paragraph_xml("GI肿瘤竞品研发动态监测报告", "Title"),
         paragraph_xml(f"扫描时间：{label}", "Subtitle"),
-        paragraph_xml(f"统计起点：{REPORT_CUTOFF_DATE.isoformat()}", "Subtitle"),
-        paragraph_xml(f"扫描结果：{summary_text}"),
+        paragraph_xml(f"扫描范围：{start_date.isoformat()} 至 {end_date.isoformat()}（近3天）", "Subtitle"),
+        paragraph_xml(f"监测公司数：{len(results)}"),
+        paragraph_xml(f"命中动态数：{len(findings)}"),
     ]
-    grouped = group_items_by_source(items)
+
     rel_index = 2
-    for source, source_items in grouped.items():
-        body_parts.append(paragraph_xml(source, "Heading1"))
-        for item in source_items:
-            body_parts.extend(
+    if findings:
+        current_company = None
+        for finding in findings:
+            if finding.company != current_company:
+                current_company = finding.company
+                body.append(paragraph_xml(current_company, "Heading1"))
+            body.extend(
                 [
-                    paragraph_xml(f"发布日期：{format_date(item.published_on)}"),
-                    paragraph_xml(f"中文标题：{translated_titles[item.url]}"),
-                    paragraph_xml(f"英文标题：{item.title}"),
-                    hyperlink_paragraph_xml(item.url, f"rId{rel_index}"),
+                    paragraph_xml(f"发布日期：{finding.published_on.isoformat()}"),
+                    paragraph_xml(f"标题：{finding.title}"),
+                    paragraph_xml(f"命中原因：{finding.reason}"),
+                    paragraph_xml(f"命中产品：{format_list(finding.matched_products)}"),
+                    paragraph_xml(f"命中靶点：{format_list(finding.matched_targets)}"),
+                    paragraph_xml(f"命中试验编号：{format_list(finding.matched_trials)}"),
+                    paragraph_xml(f"相关上下文：{format_list(finding.matched_context)}"),
+                    hyperlink_paragraph_xml("网页地址", finding.url, f"rId{rel_index}"),
                 ]
             )
             rel_index += 1
+    else:
+        body.append(paragraph_xml("近3天未发现命中已关注产品或GI肿瘤相关靶点的新官网动态。", "Heading1"))
+
+    if unavailable:
+        body.append(paragraph_xml("未找到可读取官网内容的公司", "Heading1"))
+        for result in unavailable:
+            urls = "；".join(result.official_urls) if result.official_urls else "未配置"
+            body.append(paragraph_xml(f"{result.company}：{result.unavailable_reason}。官网：{urls}"))
 
     return f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
     xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
   <w:body>
-    {''.join(body_parts)}
+    {''.join(body)}
     <w:sectPr>
       <w:pgSz w:w="12240" w:h="15840"/>
       <w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/>
@@ -644,17 +554,17 @@ def build_document_xml(
 """
 
 
-def build_relationships_xml(items: list[NewsItem]) -> str:
+def build_relationships_xml(findings: list[Finding]) -> str:
     relationships = [
         '<Relationship Id="rId1" '
         'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" '
         'Target="styles.xml"/>'
     ]
-    for index, item in enumerate(items, start=2):
+    for index, finding in enumerate(findings, start=2):
         relationships.append(
             f'<Relationship Id="rId{index}" '
             'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" '
-            f'Target="{escape(item.url)}" TargetMode="External"/>'
+            f'Target="{escape(finding.url)}" TargetMode="External"/>'
         )
     return f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
@@ -670,7 +580,7 @@ def styles_xml() -> str:
     <w:name w:val="Normal"/>
     <w:qFormat/>
     <w:pPr><w:spacing w:after="120" w:line="259" w:lineRule="auto"/></w:pPr>
-    <w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:eastAsia="Microsoft YaHei"/><w:sz w:val="24"/></w:rPr>
+    <w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:eastAsia="Microsoft YaHei"/><w:sz w:val="22"/></w:rPr>
   </w:style>
   <w:style w:type="paragraph" w:styleId="Title">
     <w:name w:val="Title"/>
@@ -678,15 +588,15 @@ def styles_xml() -> str:
     <w:next w:val="Normal"/>
     <w:qFormat/>
     <w:pPr><w:spacing w:after="240"/></w:pPr>
-    <w:rPr><w:b/><w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:eastAsia="Microsoft YaHei"/><w:sz w:val="44"/></w:rPr>
+    <w:rPr><w:b/><w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:eastAsia="Microsoft YaHei"/><w:sz w:val="38"/></w:rPr>
   </w:style>
   <w:style w:type="paragraph" w:styleId="Subtitle">
     <w:name w:val="Subtitle"/>
     <w:basedOn w:val="Normal"/>
     <w:next w:val="Normal"/>
     <w:qFormat/>
-    <w:pPr><w:spacing w:after="240"/></w:pPr>
-    <w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:eastAsia="Microsoft YaHei"/><w:color w:val="666666"/><w:sz w:val="24"/></w:rPr>
+    <w:pPr><w:spacing w:after="160"/></w:pPr>
+    <w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:eastAsia="Microsoft YaHei"/><w:color w:val="666666"/><w:sz w:val="22"/></w:rPr>
   </w:style>
   <w:style w:type="paragraph" w:styleId="Heading1">
     <w:name w:val="heading 1"/>
@@ -706,10 +616,11 @@ def styles_xml() -> str:
 
 def create_word_document(
     output_path: Path,
-    items: list[NewsItem],
-    translated_titles: dict[str, str],
+    findings: list[Finding],
+    results: list[CompanyScanResult],
     label: str,
-    summary_text: str,
+    start_date: date,
+    end_date: date,
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     content_types = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -728,93 +639,61 @@ def create_word_document(
     with zipfile.ZipFile(output_path, "w", compression=zipfile.ZIP_DEFLATED) as docx:
         docx.writestr("[Content_Types].xml", content_types)
         docx.writestr("_rels/.rels", package_rels)
-        docx.writestr(
-            "word/document.xml",
-            build_document_xml(items, translated_titles, label, summary_text),
-        )
-        docx.writestr("word/_rels/document.xml.rels", build_relationships_xml(items))
+        docx.writestr("word/document.xml", build_document_xml(findings, results, label, start_date, end_date))
+        docx.writestr("word/_rels/document.xml.rels", build_relationships_xml(findings))
         docx.writestr("word/styles.xml", styles_xml())
 
 
-def create_report(
-    output_dir: Path,
-    items: list[NewsItem],
-    translated_titles: dict[str, str],
-    label: str,
-    summary_text: str,
-    dry_run: bool,
-) -> None:
-    report_text = build_report_text(items, translated_titles, label, summary_text)
-    filename_label = bjt_now().strftime("%Y%m%d-%H%M%S")
-    output_path = output_dir / f"{REPORT_PREFIX}-{filename_label}.docx"
-    print(report_text)
-    if not dry_run:
-        create_word_document(output_path, items, translated_titles, label, summary_text)
-        print(f"Word document generated: {output_path}")
+def save_state(path: Path, findings: list[Finding], results: list[CompanyScanResult], start_date: date, end_date: date) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    state = {
+        "last_scan_bjt": scan_time_label(),
+        "scan_start_date": start_date.isoformat(),
+        "scan_end_date": end_date.isoformat(),
+        "companies_scanned": len(results),
+        "findings": len(findings),
+        "unavailable_companies": len([result for result in results if result.unavailable_reason]),
+    }
+    path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def fetch_items_for_report() -> list[NewsItem]:
-    items = (
-        fetch_pfizer_items()
-        + fetch_astrazeneca_items()
-        + fetch_roche_items()
-        + fetch_innovent_items()
-    )
-    return sorted(
-        items,
-        key=lambda item: (item.published_on, item.source, item.title.lower()),
-        reverse=True,
-    )
+def print_summary(findings: list[Finding], results: list[CompanyScanResult], start_date: date, end_date: date) -> None:
+    unavailable = [result for result in results if result.unavailable_reason]
+    checked_pages = sum(result.pages_checked for result in results)
+    print(f"Scan window: {start_date.isoformat()} to {end_date.isoformat()}")
+    print(f"Companies configured: {len(results)}")
+    print(f"Pages checked: {checked_pages}")
+    print(f"Matched findings: {len(findings)}")
+    print(f"Companies without readable official content: {len(unavailable)}")
+    for finding in findings[:50]:
+        print(f"- {finding.company} | {finding.published_on.isoformat()} | {finding.title} | {finding.url}")
+    if len(findings) > 50:
+        print(f"... {len(findings) - 50} more finding(s)")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--config", type=Path, default=CONFIG_PATH)
     parser.add_argument("--state", type=Path, default=STATE_PATH)
     parser.add_argument("--output-dir", type=Path, default=REPORT_DIR)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--max-workers", type=int, default=int(os.getenv("MAX_WORKERS", MAX_WORKERS)))
     args = parser.parse_args()
 
-    now = bjt_now()
-    forced = should_force_scan()
+    config = load_config(args.config)
+    end_date = bjt_now().date()
+    start_date = end_date - timedelta(days=max(config.scan_days - 1, 0))
 
-    _, state = load_state(args.state)
-    slot_key = current_slot_key(now)
-    if not forced:
-        if slot_key is None:
-            print("Current Beijing time is outside the scheduled scan windows.")
-            return EXIT_OUTSIDE_WINDOW
-        if state.get("last_slot_key") == slot_key:
-            print(f"Scan already completed for Beijing slot {slot_key}.")
-            return EXIT_ALREADY_SCANNED
-
-    items = fetch_items_for_report()
-    translated_titles = build_translated_titles(items)
-
+    findings, results = scan_all(config, max_workers=max(args.max_workers, 1))
     label = scan_time_label()
-    if items:
-        summary_text = (
-            f"自 {REPORT_CUTOFF_DATE.isoformat()} 起共发现 {len(items)} 条符合条件的 press release。"
-        )
-        print(
-            f"Collected {len(items)} press release item(s) on or after {REPORT_CUTOFF_DATE.isoformat()}."
-        )
-    else:
-        summary_text = f"自 {REPORT_CUTOFF_DATE.isoformat()} 起未发现符合条件的 press release。"
-        print(
-            f"No press release items were found on or after {REPORT_CUTOFF_DATE.isoformat()}."
-        )
+    print_summary(findings, results, start_date, end_date)
 
-    create_report(
-        args.output_dir,
-        items,
-        translated_titles,
-        label,
-        summary_text,
-        args.dry_run,
-    )
-
+    filename_label = bjt_now().strftime("%Y%m%d-%H%M%S")
+    output_path = args.output_dir / f"{REPORT_PREFIX}-{filename_label}.docx"
     if not args.dry_run:
-        save_state(args.state, slot_key or state.get("last_slot_key"))
+        create_word_document(output_path, findings, results, label, start_date, end_date)
+        save_state(args.state, findings, results, start_date, end_date)
+        print(f"Word document generated: {output_path}")
     return 0
 
 

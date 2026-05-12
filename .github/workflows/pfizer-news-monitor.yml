@@ -9,7 +9,7 @@ permissions:
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
 
     steps:
       - name: Checkout repository
@@ -38,6 +38,6 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin "${GITHUB_REF_NAME}"
           git add .state/pfizer_news_seen.json
-          git diff --cached --quiet || git commit -m "Update Pfizer news monitor state"
+          git diff --cached --quiet || git commit -m "Update GI oncology monitor state"
           git pull --rebase --autostash origin "${GITHUB_REF_NAME}"
           git push
