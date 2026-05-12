@@ -23,6 +23,11 @@ jobs:
       - name: Scan monitored news pages
         env:
           FORCE_SCAN: ${{ github.event_name == 'workflow_dispatch' && 'true' || 'false' }}
+          MAX_WORKERS: "24"
+          MAX_PAGES_PER_COMPANY: "10"
+          MAX_LINKS_FROM_PAGE: "5"
+          REQUEST_TIMEOUT_SECONDS: "5"
+          REQUEST_RETRIES: "1"
         run: python scripts/pfizer_news_monitor.py
 
       - name: Upload Word document
