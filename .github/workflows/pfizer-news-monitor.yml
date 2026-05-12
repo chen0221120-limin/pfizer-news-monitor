@@ -1,13 +1,6 @@
 name: Pfizer News Monitor
 
 on:
-  schedule:
-    # Run every 5 minutes only inside the UTC hours that map to the
-    # Beijing 09/12/17 scan windows and their 2-hour catch-up windows.
-    # 09:00-10:59 CST -> 01:00-02:59 UTC
-    # 12:00-13:59 CST -> 04:00-05:59 UTC
-    # 17:00-18:59 CST -> 09:00-10:59 UTC
-    - cron: "*/5 1,2,4,5,9,10 * * 1-5"
   workflow_dispatch:
 
 permissions:
