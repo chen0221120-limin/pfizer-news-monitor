@@ -1,5 +1,8 @@
 {
-  "last_scan_bjt": "2026-05-11 10:12:27 CST",
-  "last_slot_key": "2026-05-11-09",
-  "report_cutoff_date": "2026-04-01"
+  "last_scan_bjt": "2026-05-12 14:55:29 CST",
+  "scan_start_date": "2026-05-10",
+  "scan_end_date": "2026-05-12",
+  "companies_scanned": 58,
+  "findings": 6,
+  "unavailable_companies": 8
 }
