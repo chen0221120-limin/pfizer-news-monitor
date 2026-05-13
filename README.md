@@ -1,6 +1,6 @@
 # GI Oncology Competitor Monitor
 
-This project runs manual GitHub Actions workflows that scan official company websites for GI oncology R&D updates.
+This project can run either on a local Windows computer with Python or through manual GitHub Actions workflows to scan official company websites for GI oncology R&D updates.
 
 The monitor is driven by:
 
@@ -17,7 +17,36 @@ The configuration was generated from the curated Excel tracker and includes:
 - company products
 - clinical trial identifiers
 
-## Trigger
+## Local Run
+
+This repository is ready to run directly on a company Windows computer that already has Python installed.
+
+Recommended local entry points:
+
+- `run_group_a.bat`
+- `run_group_b.bat`
+- `run_all_groups.bat`
+
+What each file does:
+
+- `run_group_a.bat`: scans the first half of companies
+- `run_group_b.bat`: scans the second half of companies
+- `run_all_groups.bat`: runs group A first, then group B
+
+You can also run the Python script directly:
+
+```bash
+python scripts/pfizer_news_monitor.py --company-group-count 2 --company-group-index 1 --state .state/pfizer_news_seen_group_a.json --report-prefix gi-oncology-monitor-group-a
+python scripts/pfizer_news_monitor.py --company-group-count 2 --company-group-index 2 --state .state/pfizer_news_seen_group_b.json --report-prefix gi-oncology-monitor-group-b
+```
+
+Generated Word reports are written to:
+
+```text
+reports/
+```
+
+## GitHub Trigger
 
 The workflows are manual-only.
 
@@ -47,6 +76,41 @@ A page is included in the report when it has a recognized publication date withi
 - an interested target plus GI oncology context plus a clinical/R&D event term
 
 If a company website cannot be reached or no readable official content can be found, the Word report lists that company in a separate section.
+
+## Browser Discovery Trial
+
+A first trial browser-assisted mode is now available for a small set of harder websites.
+
+When enabled, the script will:
+
+- open selected listing pages in a real browser
+- capture a screenshot of the rendered page
+- read visible title/date/link candidates from the rendered page
+- use those rendered items as discovery signals before the normal article crawl
+
+This is meant to reduce false positives from:
+
+- sitemap pages
+- pipeline overview pages
+- homepage marketing text
+- JS-rendered listing pages that do not expose clean HTML to the current crawler
+
+Browser discovery is optional and is disabled by default.
+
+Example local run:
+
+```bash
+set BROWSER_DISCOVERY_ENABLED=true
+set NODE_EXECUTABLE=C:\path\to\node.exe
+set NODE_MODULES_DIR=C:\path\to\node_modules
+python scripts/pfizer_news_monitor_browser_trial.py --company-group-count 2 --company-group-index 1 --state .state/pfizer_news_seen_group_a.json --report-prefix gi-oncology-monitor-group-a-browser-test
+```
+
+Screenshots from this trial mode are written to:
+
+```text
+reports/browser-previews/
+```
 
 ## Output
 
@@ -109,3 +173,5 @@ MAX_LINKS_FROM_PAGE=24
 REQUEST_TIMEOUT_SECONDS=12
 REQUEST_RETRIES=2
 ```
+
+These same defaults are also used when you run the scripts locally unless you override them with environment variables.
