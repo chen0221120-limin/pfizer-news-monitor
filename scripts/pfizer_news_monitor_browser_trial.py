@@ -327,7 +327,7 @@ def main() -> int:
     parser.add_argument("--company-group-count", type=int, default=int(os.getenv("COMPANY_GROUP_COUNT", "1")))
     parser.add_argument("--company-group-index", type=int, default=int(os.getenv("COMPANY_GROUP_INDEX", "1")))
     parser.add_argument("--report-prefix", default=os.getenv("REPORT_PREFIX_OVERRIDE", base.REPORT_PREFIX))
-    args = parse_args()
+    args = parser.parse_args()
 
     config = base.load_config(args.config)
     config = base.slice_companies(config, max(args.company_group_count, 1), args.company_group_index)
