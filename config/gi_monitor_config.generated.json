@@ -1,0 +1,997 @@
+{
+  "scan_days": 3,
+  "event_terms": [
+    "phase",
+    "ph1",
+    "ph2",
+    "ph3",
+    "clinical trial",
+    "study",
+    "trial",
+    "first patient",
+    "enrolled",
+    "enrollment",
+    "initiated",
+    "started",
+    "IND",
+    "NDA",
+    "BLA",
+    "approval",
+    "approved",
+    "topline",
+    "positive data",
+    "primary endpoint",
+    "overall survival",
+    "progression-free survival",
+    "ORR",
+    "DCR",
+    "NCT",
+    "CTR",
+    "涓村簥",
+    "璇曢獙",
+    "鐮旂┒",
+    "鍏ョ粍",
+    "棣栦緥",
+    "鑾锋壒",
+    "鎵瑰噯",
+    "鐢虫姤",
+    "闃虫€?",
+    "缁堢偣",
+    "鏁版嵁"
+  ],
+  "gi_context_terms": [
+    "gastric",
+    "stomach",
+    "gastroesophageal",
+    "colorectal",
+    "colon",
+    "rectal",
+    "hcc",
+    "hepatocellular",
+    "liver cancer",
+    "esophageal",
+    "oesophageal",
+    "pancreatic",
+    "cholangiocarcinoma",
+    "biliary",
+    "GI tumor",
+    "gastrointestinal",
+    "鑳冪檶",
+    "缁撶洿鑲犵檶",
+    "鑲濈檶",
+    "鑲濈粏鑳炵檶",
+    "椋熺鐧?",
+    "鑳拌吅鐧?",
+    "鑳嗛亾鐧?",
+    "娑堝寲閬?",
+    "娑堝寲鑲跨槫"
+  ],
+  "common_paths": [],
+  "companies": [
+    {
+      "company": "AbbVie / 鑹句集缁?",
+      "official_urls": [
+        "https://www.abbvie.com.cn/pressroom.html?csrt=13205289102774847986",
+        "https://news.abbvie.com/index.php?s=2429&#news_anchor",
+        "https://news.abbvie.com/index.php?s=2430&#news_anchor"
+      ],
+      "diseases": [
+        "缁撶洿鑲犵檶",
+        "鑳拌吅瀵肩鑵虹檶"
+      ],
+      "targets": [
+        "c-MET"
+      ],
+      "products": [
+        "ABBV-400"
+      ],
+      "trial_ids": [
+        "NCT07023289",
+        "NCT06614192",
+        "NCT07525206",
+        "NCT07490301"
+      ],
+      "watch_items": [
+        {
+          "disease": "缁撶洿鑲犵檶",
+          "target": "c-MET",
+          "product": "ABBV-400",
+          "trial_id": "NCT07023289"
+        },
+        {
+          "disease": "缁撶洿鑲犵檶",
+          "target": "c-MET",
+          "product": "ABBV-400",
+          "trial_id": "NCT06614192"
+        },
+        {
+          "disease": "缁撶洿鑲犵檶",
+          "target": "c-MET",
+          "product": "ABBV-400",
+          "trial_id": "NCT07525206"
+        },
+        {
+          "disease": "鑳拌吅瀵肩鑵虹檶",
+          "target": "c-MET",
+          "product": "ABBV-400",
+          "trial_id": "NCT07490301"
+        }
+      ]
+    },
+    {
+      "company": "Agenus",
+      "official_urls": [
+        "https://investor.agenusbio.com/news/default.aspx"
+      ],
+      "diseases": [
+        "缁撶洿鑲犵檶"
+      ],
+      "targets": [
+        "pMMR/MSS"
+      ],
+      "products": [
+        "Botensilimab+Balstilimab"
+      ],
+      "trial_ids": [
+        "NCT05627635"
+      ],
+      "watch_items": [
+        {
+          "disease": "缁撶洿鑲犵檶",
+          "target": "pMMR/MSS",
+          "product": "Botensilimab+Balstilimab",
+          "trial_id": "NCT05627635"
+        }
+      ]
+    },
+    {
+      "company": "Amgen / 瀹夎繘",
+      "official_urls": [
+        "https://www.amgen.cn/cn/news_list.html",
+        "https://www.amgen.com/newsroom/press-releases"
+      ],
+      "diseases": [
+        "缁撶洿鑲犵檶",
+        "鑳嗛亾鐧?"
+      ],
+      "targets": [
+        "RAS mut",
+        "PRMT5"
+      ],
+      "products": [
+        "Sotorasib",
+        "AMG193"
+      ],
+      "trial_ids": [
+        "NCT06252649",
+        "NCT05094336",
+        "NCT06360354"
+      ],
+      "watch_items": [
+        {
+          "disease": "缁撶洿鑲犵檶",
+          "target": "RAS mut",
+          "product": "Sotorasib",
+          "trial_id": "NCT06252649"
+        },
+        {
+          "disease": "鑳嗛亾鐧?",
+          "target": "PRMT5",
+          "product": "AMG193",
+          "trial_id": "NCT05094336"
+        },
+        {
+          "disease": "鑳嗛亾鐧?",
+          "target": "PRMT5",
+          "product": "AMG193",
+          "trial_id": "NCT06360354"
+        }
+      ]
+    },
+    {
+      "company": "Arcus Biosciences",
+      "official_urls": [
+        "https://investors.arcusbio.com/investors-and-media/press-releases/default.aspx",
+        "https://arcusbio.com/our-science/publications/"
+      ],
+      "diseases": [
+        "鑳拌吅瀵肩鑵虹檶"
+      ],
+      "targets": [
+        "IO"
+      ],
+      "products": [
+        "Quemliclustat"
+      ],
+      "trial_ids": [
+        "NCT06608927"
+      ],
+      "watch_items": [
+        {
+          "disease": "鑳拌吅瀵肩鑵虹檶",
+          "target": "IO",
+          "product": "Quemliclustat",
+          "trial_id": "NCT06608927"
+        }
+      ]
+    },
+    {
+      "company": "Astellas / 瀹夋柉娉版潵",
+      "official_urls": [
+        "https://newsroom.astellas.com/china-news?l=50",
+        "https://newsroom.astellas.com/news",
+        "https://newsroom.astellas.com/china-news?l=51"
+      ],
+      "diseases": [
+        "鑳冪檶",
+        "鑳拌吅瀵肩鑵虹檶"
+      ],
+      "targets": [
+        "CLDN18.2",
+        "G12D"
+      ],
+      "products": [
+        "Zolbetuximab",
+        "ASP3082",
+        "ASP2138"
+      ],
+      "trial_ids": [
+        "NCT06901531",
+        "NCT07409272",
+        "NCT07024615"
+      ],
+      "watch_items": [
+        {
+          "disease": "鑳冪檶",
+          "target": "CLDN18.2",
+          "product": "Zolbetuximab",
+          "trial_id": "NCT06901531"
+        },
+        {
+          "disease": "鑳拌吅瀵肩鑵虹檶",
+          "target": "G12D",
+          "product": "ASP3082",
+          "trial_id": "NCT07409272"
+        },
+        {
+          "disease": "鑳拌吅瀵肩鑵虹檶",
+          "target": "CLDN18.2",
+          "product": "ASP2138",
+          "trial_id": "NCT07024615"
+        }
+      ]
+    },
+    {
+      "company": "AstraZeneca / 闃挎柉鍒╁悍",
+      "official_urls": [
+        "https://www.astrazeneca.com.cn/zh/media.html",
+        "https://www.astrazeneca.com/media-centre/press-releases.html",
+        "https://www.astrazeneca.com/investor-relations/clinical-trials-appendix.html"
+      ],
+      "diseases": [
+        "鑲濈粏鑳炵檶",
+        "鑳冪檶",
+        "鑳嗛亾鐧?",
+        "椋熺鐧?"
+      ],
+      "targets": [
+        "IO+鎶楄绠?",
+        "PD-1/TIGIT",
+        "PD-L1",
+        "CLDN18.2",
+        "HER2",
+        "IO卤闈跺悜"
+      ],
+      "products": [
+        "Durvalumab",
+        "Durvalumab + Tremelimumab",
+        "Rilvegostomig + Bevacizumab + Tremelimumab",
+        "AZD0901",
+        "T-DXd",
+        "T-DXd + Rilvegostomig",
+        "Rilvegostomig",
+        "Sonesitatug vedotin"
+      ],
+      "trial_ids": [
+        "NCT03847428",
+        "NCT03778957",
+        "NCT05301842",
+        "CTR20254914",
+        "NCT06921785",
+        "NCT04592913",
+        "NCT06346392",
+        "NCT06731478",
+        "CTR20254901",
+        "NCT04482309",
+        "NCT06467357",
+        "NCT06109779",
+        "NCT07221253",
+        "NCT06219941",
+        "NCT04550260"
+      ],
+      "watch_items": [
+        {
+          "disease": "鑲濈粏鑳炵檶",
+          "target": "IO+鎶楄绠?",
+          "product": "Durvalumab",
+          "trial_id": "NCT03847428"
+        },
+        {
+          "disease": "鑲濈粏鑳炵檶",
+          "target": "IO+鎶楄绠?",
+          "product": "Durvalumab",
+          "trial_id": "NCT03778957"
+        },
+        {
+          "disease": "鑲濈粏鑳炵檶",
+          "target": "IO+鎶楄绠?",
+          "product": "Durvalumab + Tremelimumab",
+          "trial_id": "NCT05301842"
+        },
+        {
+          "disease": "鑲濈粏鑳炵檶",
+          "target": "IO+鎶楄绠?",
+          "product": "Durvalumab + Tremelimumab",
+          "trial_id": "CTR20254914"
+        },
+        {
+          "disease": "鑲濈粏鑳炵檶",
+          "target": "PD-1/TIGIT",
+          "product": "Rilvegostomig + Bevacizumab + Tremelimumab",
+          "trial_id": "NCT06921785"
+        },
+        {
+          "disease": "鑳冪檶",
+          "target": "PD-L1",
+          "product": "Durvalumab",
+          "trial_id": "NCT04592913"
+        },
+        {
+          "disease": "鑳冪檶",
+          "target": "CLDN18.2",
+          "product": "AZD0901",
+          "trial_id": "NCT06346392"
+        },
+        {
+          "disease": "鑳冪檶",
+          "target": "HER2",
+          "product": "T-DXd",
+          "trial_id": "NCT06731478"
+        },
+        {
+          "disease": "鑳冪檶",
+          "target": "CLDN18.2",
+          "product": "AZD0901",
+          "trial_id": "CTR20254901"
+        },
+        {
+          "disease": "鑳嗛亾鐧?",
+          "target": "HER2",
+          "product": "T-DXd",
+          "trial_id": "NCT04482309"
+        },
+        {
+          "disease": "鑳嗛亾鐧?",
+          "target": "HER2",
+          "product": "T-DXd + Rilvegostomig",
+          "trial_id": "NCT06467357"
+        },
+        {
+          "disease": "鑳嗛亾鐧?",
+          "target": "PD-1/TIGIT",
+          "product": "Rilvegostomig",
+          "trial_id": "NCT06109779"
+        },
+        {
+          "disease": "鑳嗛亾鐧?",
+          "target": "PD-1/TIGIT",
+          "product": "Rilvegostomig",
+          "trial_id": "NCT07221253"
+        },
+        {
+          "disease": "鑳嗛亾鐧?",
+          "target": "CLDN18.2",
+          "product": "Sonesitatug vedotin",
+          "trial_id": "NCT06219941"
+        },
+        {
+          "disease": "椋熺鐧?",
+          "target": "IO卤闈跺悜",
+          "product": "Durvalumab",
+          "trial_id": "NCT04550260"
+        }
+      ]
+    },
+    {
+      "company": "AstraZeneca / 闃挎柉鍒╁悍 + Daiichi Sankyo / 绗竴涓夊叡",
+      "official_urls": [
+        "https://www.astrazeneca.com.cn/zh/media.html",
+        "https://www.daiichisankyo.com.cn/news",
+        "https://www.daiichisankyo.com/news/index_4623.html",
+        "https://www.astrazeneca.com/",
+        "https://www.daiichisankyo.com/"
+      ],
+      "diseases": [
+        "鑳冪檶"
+      ],
+      "targets": [
+        "HER2"
+      ],
+      "products": [
+        "T-DXd"
+      ],
+      "trial_ids": [
+        "NCT06764875"
+      ],
+      "watch_items": [
+        {
+          "disease": "鑳冪檶",
+          "target": "HER2",
+          "product": "T-DXd",
+          "trial_id": "NCT06764875"
+        }
+      ]
+    },
+    {
+      "company": "Bristol Myers Squibb / 鐧炬椂缇庢柦璐靛疂",
+      "official_urls": [
+        "https://www.bms.com/cn/media/press-releases.html",
+        "https://www.bms.com/media/press-releases.html",
+        "https://www.bms.com/researchers-and-partners/clinical-trials-and-research/clinical-trial-results.html?therapeuticArea=oncology",
+        "https://www.bms.com/researchers-and-partners/our-r-and-d-team/research-publications.html"
+      ],
+      "diseases": [
+        "缁撶洿鑲犵檶",
+        "鑲濈粏鑳炵檶",
+        "鑳冪檶",
+        "鑳嗛亾鐧?",
+        "鑳拌吅瀵肩鑵虹檶"
+      ],
+      "targets": [
+        "pMMR/MSS",
+        "IO",
+        "PD-L1/VEGF",
+        "PRMT5"
+      ],
+      "products": [
+        "Pumitamig",
+        "Nivolumabb",
+        "MRTX1719",
+        "BMS-986504"
+      ],
+      "trial_ids": [
+        "NCT07221357",
+        "NCT03383458",
+        "NCT07221149",
+        "NCT07077434",
+        "NCT07076121"
+      ],
+      "watch_items": [
+        {
+          "disease": "缁撶洿鑲犵檶",
+          "target": "pMMR/MSS",
+          "product": "Pumitamig",
+          "trial_id": "NCT07221357"
+        },
+        {
+          "disease": "鑲濈粏鑳炵檶",
+          "target": "IO",
+          "product": "Nivolumabb",
+          "trial_id": "NCT03383458"
+        },
+        {
+          "disease": "鑳冪檶",
+          "target": "PD-L1/VEGF",
+          "product": "Pumitamig",
+          "trial_id": "NCT07221149"
+        },
+        {
+          "disease": "鑳嗛亾鐧?",
+          "target": "PRMT5",
+          "product": "MRTX1719",
+          "trial_id": "NCT07077434"
+        },
+        {
+          "disease": "鑳拌吅瀵肩鑵虹檶",
+          "target": "PRMT5",
+          "product": "BMS-986504",
+          "trial_id": "NCT07076121"
+        }
+      ]
+    },
+    {
+      "company": "Exelixis",
+      "official_urls": [
+        "https://ir.exelixis.com/press-releases"
+      ],
+      "diseases": [
+        "缁撶洿鑲犵檶"
+      ],
+      "targets": [
+        "IO"
+      ],
+      "products": [
+        "Atezolizumab"
+      ],
+      "trial_ids": [
+        "STELLAR-303"
+      ],
+      "watch_items": [
+        {
+          "disease": "缁撶洿鑲犵檶",
+          "target": "IO",
+          "product": "Atezolizumab",
+          "trial_id": "STELLAR-303"
+        }
+      ]
+    },
+    {
+      "company": "GSK / 钁涘叞绱犲彶鍏?",
+      "official_urls": [
+        "https://www.gsk-china.com/zh-cn/media/press-releases/",
+        "https://www.gsk.com/en-gb/media/press-releases/?ps=20&latestArticles=true"
+      ],
+      "diseases": [
+        "缁撶洿鑲犵檶"
+      ],
+      "targets": [
+        "dMMR/MSI-H",
+        "pMMR/MSS"
+      ],
+      "products": [
+        "Dostarlimab"
+      ],
+      "trial_ids": [
+        "NCT05723562",
+        "NCT05855200",
+        "NCT06567782"
+      ],
+      "watch_items": [
+        {
+          "disease": "缁撶洿鑲犵檶",
+          "target": "dMMR/MSI-H",
+          "product": "Dostarlimab",
+          "trial_id": "NCT05723562"
+        },
+        {
+          "disease": "缁撶洿鑲犵檶",
+          "target": "dMMR/MSI-H",
+          "product": "Dostarlimab",
+          "trial_id": "NCT05855200"
+        },
+        {
+          "disease": "缁撶洿鑲犵檶",
+          "target": "pMMR/MSS",
+          "product": "Dostarlimab",
+          "trial_id": "NCT06567782"
+        }
+      ]
+    },
+    {
+      "company": "Incyte",
+      "official_urls": [
+        "https://investor.incyte.com/press-releases"
+      ],
+      "diseases": [
+        "缁撶洿鑲犵檶"
+      ],
+      "targets": [
+        "pMMR/MSS"
+      ],
+      "products": [
+        "INCA33890"
+      ],
+      "trial_ids": [
+        "NCT07284849"
+      ],
+      "watch_items": [
+        {
+          "disease": "缁撶洿鑲犵檶",
+          "target": "pMMR/MSS",
+          "product": "INCA33890",
+          "trial_id": "NCT07284849"
+        }
+      ]
+    },
+    {
+      "company": "Johnson & Johnson / 寮虹敓",
+      "official_urls": [
+        "https://www.jnj.com.cn/news/press-releases?p=2",
+        "https://www.jnj.com/media-center/press-releases?q=&f3=0000018d-93c5-ddb6-a39d-b7cd711f0000&s=1"
+      ],
+      "diseases": [
+        "缁撶洿鑲犵檶"
+      ],
+      "targets": [
+        "RAS/BRAF wt"
+      ],
+      "products": [
+        "Amivantamab"
+      ],
+      "trial_ids": [
+        "NCT06662786",
+        "NCT06750094"
+      ],
+      "watch_items": [
+        {
+          "disease": "缁撶洿鑲犵檶",
+          "target": "RAS/BRAF wt",
+          "product": "Amivantamab",
+          "trial_id": "NCT06662786"
+        },
+        {
+          "disease": "缁撶洿鑲犵檶",
+          "target": "RAS/BRAF wt",
+          "product": "Amivantamab",
+          "trial_id": "NCT06750094"
+        }
+      ]
+    },
+    {
+      "company": "Merck / 榛樺厠",
+      "official_urls": [
+        "https://www.merckgroup.com.cn/press-news/news/",
+        "https://www.merckgroup.com/en/news.html"
+      ],
+      "diseases": [
+        "缁撶洿鑲犵檶"
+      ],
+      "targets": [
+        "CEACAM5"
+      ],
+      "products": [
+        "Precem-TcT"
+      ],
+      "trial_ids": [
+        "NCT07549412"
+      ],
+      "watch_items": [
+        {
+          "disease": "缁撶洿鑲犵檶",
+          "target": "CEACAM5",
+          "product": "Precem-TcT",
+          "trial_id": "NCT07549412"
+        }
+      ]
+    },
+    {
+      "company": "Merus",
+      "official_urls": [
+        "https://merus.nl/technology/publications/"
+      ],
+      "diseases": [
+        "缁撶洿鑲犵檶"
+      ],
+      "targets": [
+        "EGFR/LGR5"
+      ],
+      "products": [
+        "MCLA-158"
+      ],
+      "trial_ids": [],
+      "watch_items": [
+        {
+          "disease": "缁撶洿鑲犵檶",
+          "target": "EGFR/LGR5",
+          "product": "MCLA-158",
+          "trial_id": ""
+        }
+      ]
+    },
+    {
+      "company": "MSD / 榛樻矙涓?",
+      "official_urls": [
+        "https://www.msdchina.com.cn/media/",
+        "https://www.msd.com/research/publications/"
+      ],
+      "diseases": [
+        "缁撶洿鑲犵檶",
+        "鑳冪檶",
+        "椋熺鐧?",
+        "鑲濈粏鑳炵檶"
+      ],
+      "targets": [
+        "RAS mut",
+        "PD-1",
+        "IO卤闈跺悜",
+        "IO"
+      ],
+      "products": [
+        "MK-1084",
+        "Pembrolizumab"
+      ],
+      "trial_ids": [
+        "NCT06997497",
+        "NCT03221426",
+        "NCT04210115",
+        "NCT03867084"
+      ],
+      "watch_items": [
+        {
+          "disease": "缁撶洿鑲犵檶",
+          "target": "RAS mut",
+          "product": "MK-1084",
+          "trial_id": "NCT06997497"
+        },
+        {
+          "disease": "鑳冪檶",
+          "target": "PD-1",
+          "product": "Pembrolizumab",
+          "trial_id": "NCT03221426"
+        },
+        {
+          "disease": "椋熺鐧?",
+          "target": "IO卤闈跺悜",
+          "product": "Pembrolizumab",
+          "trial_id": "NCT04210115"
+        },
+        {
+          "disease": "鑲濈粏鑳炵檶",
+          "target": "IO",
+          "product": "Pembrolizumab",
+          "trial_id": "NCT03867084"
+        }
+      ]
+    },
+    {
+      "company": "MSD / 榛樻矙涓?+ Daiichi Sankyo / 绗竴涓夊叡",
+      "official_urls": [
+        "https://www.msdchina.com.cn/media/",
+        "https://www.msd.com/research/publications/"
+      ],
+      "diseases": [
+        "椋熺鐧?"
+      ],
+      "targets": [
+        "闈跺悜"
+      ],
+      "products": [
+        "I-DXd"
+      ],
+      "trial_ids": [
+        "NCT06644781"
+      ],
+      "watch_items": [
+        {
+          "disease": "椋熺鐧?",
+          "target": "闈跺悜",
+          "product": "I-DXd",
+          "trial_id": "NCT06644781"
+        }
+      ]
+    },
+    {
+      "company": "Pfizer / 杈夌憺",
+      "official_urls": [
+        "https://www.pfizer.com.cn/zh-hans/news/press-release",
+        "https://www.pfizer.com/newsroom/press-releases",
+        "https://www.pfizer.com/newsroom/updates-and-statements"
+      ],
+      "diseases": [
+        "缁撶洿鑲犵檶",
+        "鑳冪檶"
+      ],
+      "targets": [
+        "pMMR/MSS",
+        "PD-1/VEGF"
+      ],
+      "products": [
+        "PF-08634404"
+      ],
+      "trial_ids": [
+        "NCT07222800",
+        "NCT07392892"
+      ],
+      "watch_items": [
+        {
+          "disease": "缁撶洿鑲犵檶",
+          "target": "pMMR/MSS",
+          "product": "PF-08634404",
+          "trial_id": "NCT07222800"
+        },
+        {
+          "disease": "鑳冪檶",
+          "target": "PD-1/VEGF",
+          "product": "PF-08634404",
+          "trial_id": "NCT07392892"
+        }
+      ]
+    },
+    {
+      "company": "Quanta Therapeutics",
+      "official_urls": [
+        "https://www.quantatx.com/"
+      ],
+      "diseases": [
+        "缁撶洿鑲犵檶"
+      ],
+      "targets": [
+        "RAS mut"
+      ],
+      "products": [
+        "QTX3034"
+      ],
+      "trial_ids": [
+        "NCT07012577"
+      ],
+      "watch_items": [
+        {
+          "disease": "缁撶洿鑲犵檶",
+          "target": "RAS mut",
+          "product": "QTX3034",
+          "trial_id": "NCT07012577"
+        }
+      ]
+    },
+    {
+      "company": "Roche / 缃楁皬",
+      "official_urls": [
+        "https://www.roche.com/media/releases",
+        "https://www.roche.com/about/business/roche-in-china"
+      ],
+      "diseases": [
+        "鑳冪檶"
+      ],
+      "targets": [
+        "FGFR2b"
+      ],
+      "products": [
+        "Alofanib"
+      ],
+      "trial_ids": [
+        "NCT06968572"
+      ],
+      "watch_items": [
+        {
+          "disease": "鑳冪檶",
+          "target": "FGFR2b",
+          "product": "Alofanib",
+          "trial_id": "NCT06968572"
+        }
+      ]
+    },
+    {
+      "company": "Sanhome / 鍦ｈ鍖昏嵂",
+      "official_urls": [
+        "http://www.sanhome.com/news.aspx?TypeId=4"
+      ],
+      "diseases": [
+        "鑊ｅ鐧?"
+      ],
+      "targets": [
+        "PD-L1/TIGIT"
+      ],
+      "products": [
+        "SHR-8068"
+      ],
+      "trial_ids": [
+        "CTR20260583"
+      ],
+      "watch_items": [
+        {
+          "disease": "鑊ｅ鐧?",
+          "target": "PD-L1/TIGIT",
+          "product": "SHR-8068",
+          "trial_id": "CTR20260583"
+        }
+      ]
+    },
+    {
+      "company": "Servier / 賽維健",
+      "official_urls": [
+        "https://servier.com/en/newsroom/",
+        "https://servier.com/our-science/publications/"
+      ],
+      "diseases": [
+        "缁撶洿鑲犵檶"
+      ],
+      "targets": [
+        "KRAS G12C"
+      ],
+      "products": [
+        "olomorasib"
+      ],
+      "trial_ids": [
+        "NCT07128459"
+      ],
+      "watch_items": [
+        {
+          "disease": "缁撶洿鑲犵檶",
+          "target": "KRAS G12C",
+          "product": "olomorasib",
+          "trial_id": "NCT07128459"
+        }
+      ]
+    },
+    {
+      "company": "Takeda / 姝︾敯",
+      "official_urls": [
+        "https://www.takeda.com/zh-cn/newsroom/",
+        "https://www.takeda.com/newsroom/"
+      ],
+      "diseases": [
+        "缁撶洿鑲犵檶"
+      ],
+      "targets": [
+        "EGFR/LGR5"
+      ],
+      "products": [
+        "MCLA-158"
+      ],
+      "trial_ids": [
+        "NCT05154149"
+      ],
+      "watch_items": [
+        {
+          "disease": "缁撶洿鑲犵檶",
+          "target": "EGFR/LGR5",
+          "product": "MCLA-158",
+          "trial_id": "NCT05154149"
+        }
+      ]
+    },
+    {
+      "company": "Tevogen Bio",
+      "official_urls": [
+        "https://www.tevogen.com/news"
+      ],
+      "diseases": [
+        "缁撶洿鑲犵檶"
+      ],
+      "targets": [
+        "RAS mut"
+      ],
+      "products": [
+        "TVGN 920"
+      ],
+      "trial_ids": [
+        "NCT07134204"
+      ],
+      "watch_items": [
+        {
+          "disease": "缁撶洿鑲犵檶",
+          "target": "RAS mut",
+          "product": "TVGN 920",
+          "trial_id": "NCT07134204"
+        }
+      ]
+    },
+    {
+      "company": "Zai Lab / 再鼎医药",
+      "official_urls": [
+        "https://www.zailaboratory.com/news-and-media/press-releases/",
+        "https://www.zailaboratory.com/zh/news-and-media/press-releases/"
+      ],
+      "diseases": [
+        "胃癌",
+        "胆道癌"
+      ],
+      "targets": [
+        "FGFR2b",
+        "HER2"
+      ],
+      "products": [
+        "bemarituzumab",
+        "zanidatamab"
+      ],
+      "trial_ids": [
+        "NCT06515665",
+        "NCT06282575"
+      ],
+      "watch_items": [
+        {
+          "disease": "胃癌",
+          "target": "FGFR2b",
+          "product": "bemarituzumab",
+          "trial_id": "NCT06515665"
+        },
+        {
+          "disease": "胆道癌",
+          "target": "HER2",
+          "product": "zanidatamab",
+          "trial_id": "NCT06282575"
+        }
+      ]
+    }
+  ]
+}
