@@ -20,6 +20,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install Python dependencies
+        run: python -m pip install openpyxl
+
       - name: Build config from Excel
         run: python scripts/build_gi_monitor_config_from_excel.py
 
