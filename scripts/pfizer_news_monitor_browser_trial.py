@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Browser-assisted trial runner for the GI oncology monitor."""
+"""Browser-assisted runner for the GI oncology monitor."""
 
 from __future__ import annotations
 
@@ -62,61 +62,6 @@ def supports_browser_discovery(url: str) -> bool:
         return False
     host = base.urlparse(url).netloc.lower()
     return any(host == domain or host.endswith("." + domain) for domain in BROWSER_DISCOVERY_DOMAINS)
-
-
-def build_finding(
-    company: base.CompanyConfig,
-    title: str,
-    source_url: str,
-    published_on: date,
-    combined_text: str,
-    config: base.MonitorConfig,
-    evidence: str = "",
-) -> base.Finding | None:
-    product_hits = base.find_keyword_hits(combined_text, base.keywords_from(company.products))
-    trial_hits = base.find_keyword_hits(combined_text, base.keywords_from(company.trial_ids))
-    target_hits = base.find_keyword_hits(combined_text, base.keywords_from(company.targets))
-    disease_hits = base.find_keyword_hits(combined_text, base.keywords_from(company.diseases) + list(config.gi_context_terms))
-    event_hits = base.find_keyword_hits(combined_text, list(config.event_terms))
-
-    product_or_trial_hit = bool(product_hits or trial_hits)
-    new_target_gi_clinical_hit = bool(target_hits and disease_hits and event_hits)
-    if not product_or_trial_hit and not new_target_gi_clinical_hit:
-        return None
-
-    reason_parts = []
-    if product_or_trial_hit:
-        reason_parts.append("命中已关注产品/临床试验")
-    if new_target_gi_clinical_hit:
-        reason_parts.append("命中GI肿瘤相关靶点和临床/R&D事件")
-
-    return base.Finding(
-        company=company.company,
-        title=title,
-        url=source_url,
-        published_on=published_on,
-        matched_products=product_hits[:8],
-        matched_targets=target_hits[:8],
-        matched_trials=trial_hits[:6],
-        matched_context=(disease_hits + event_hits)[:10],
-        evidence=evidence,
-        reason="；".join(reason_parts),
-    )
-
-
-def evaluate_rendered_item(
-    company: base.CompanyConfig,
-    item: RenderedNewsItem,
-    config: base.MonitorConfig,
-    start_date: date,
-    end_date: date,
-) -> base.Finding | None:
-    published_on = base.parse_date_text(item.date_text)
-    if published_on is None or not base.is_in_scan_window(published_on, start_date, end_date):
-        return None
-    combined = "\n".join(part for part in (item.title, item.snippet) if part)
-    evidence = item.snippet or item.title
-    return build_finding(company, item.title, item.url, published_on, combined, config, evidence)
 
 
 def run_browser_discovery(url: str, company_name: str) -> list[RenderedNewsItem]:
@@ -224,12 +169,6 @@ def scan_company(company: base.CompanyConfig, config: base.MonitorConfig, start_
             findings.append(finding)
             finding_urls.add(finding.url)
 
-    def collect_rendered_finding(item: RenderedNewsItem) -> None:
-        finding = evaluate_rendered_item(company, item, config, start_date, end_date)
-        if finding and finding.url not in finding_urls:
-            findings.append(finding)
-            finding_urls.add(finding.url)
-
     while (
         discovery_queue
         and pages_checked < base.MAX_PAGES_PER_COMPANY
@@ -248,17 +187,20 @@ def scan_company(company: base.CompanyConfig, config: base.MonitorConfig, start_
         pages_checked += 1
         discovery_pages_checked += 1
 
-        if browser_discovery_runs < BROWSER_DISCOVERY_LIMIT and supports_browser_discovery(url) and is_probable_listing_url(url):
+        if (
+            browser_discovery_runs < BROWSER_DISCOVERY_LIMIT
+            and supports_browser_discovery(url)
+            and is_probable_listing_url(url)
+        ):
             browser_discovery_runs += 1
             for item in run_browser_discovery(url, company.company):
-                collect_rendered_finding(item)
-                if base.looks_like_article_url(item.url):
+                if item.url:
                     enqueue_article(item.url)
 
         for link in base.extract_links(url, page_text, roots):
             if base.looks_like_article_url(link):
                 enqueue_article(link)
-            else:
+            elif not base.EXACT_URLS_ONLY:
                 enqueue_discovery(link)
 
     while (
@@ -323,7 +265,7 @@ def main() -> int:
     parser.add_argument("--state", type=Path, default=base.STATE_PATH)
     parser.add_argument("--output-dir", type=Path, default=base.REPORT_DIR)
     parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--max-workers", type=int, default=int(os.getenv("MAX_WORKERS", base.MAX_WORKERS)))
+    parser.add_argument("--max-workers", type=int, default=int(os.getenv("MAX_WORKERS", str(base.MAX_WORKERS))))
     parser.add_argument("--company-group-count", type=int, default=int(os.getenv("COMPANY_GROUP_COUNT", "1")))
     parser.add_argument("--company-group-index", type=int, default=int(os.getenv("COMPANY_GROUP_INDEX", "1")))
     parser.add_argument("--report-prefix", default=os.getenv("REPORT_PREFIX_OVERRIDE", base.REPORT_PREFIX))
