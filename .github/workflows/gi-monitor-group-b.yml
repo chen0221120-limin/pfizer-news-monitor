@@ -15,44 +15,37 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Install browser dependencies
-        run: |
-          npm install playwright
-          npx playwright install --with-deps chromium
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Scan company group B browser trial
+      - name: Build config from Excel
+        run: python scripts/build_gi_monitor_config_from_excel.py
+
+      - name: Scan company group B
         env:
-          BROWSER_DISCOVERY_ENABLED: "true"
-          NODE_MODULES_DIR: "${{ github.workspace }}/node_modules"
+          EXACT_URLS_ONLY: "true"
           MAX_WORKERS: "10"
-          MAX_PAGES_PER_COMPANY: "42"
-          MAX_ENTRY_PAGES_PER_COMPANY: "18"
-          MAX_ARTICLE_PAGES_PER_COMPANY: "24"
-          MAX_LINKS_FROM_PAGE: "24"
-          REQUEST_TIMEOUT_SECONDS: "12"
-          REQUEST_RETRIES: "2"
+          MAX_PAGES_PER_COMPANY: "12"
+          MAX_ENTRY_PAGES_PER_COMPANY: "6"
+          MAX_ARTICLE_PAGES_PER_COMPANY: "8"
+          MAX_LINKS_FROM_PAGE: "12"
+          REQUEST_TIMEOUT_SECONDS: "6"
+          REQUEST_RETRIES: "1"
         run: >-
-          python scripts/pfizer_news_monitor_browser_trial.py
+          python scripts/pfizer_news_monitor.py
+          --config config/gi_monitor_config.generated.json
           --company-group-count 2
           --company-group-index 2
           --state .state/pfizer_news_seen_group_b.json
-          --report-prefix gi-oncology-monitor-group-b-browser-test
+          --report-prefix gi-oncology-monitor-group-b
 
       - name: Upload Word document
         uses: actions/upload-artifact@v4
         with:
-          name: news-monitor-report-group-b-browser-test
-          path: reports/gi-oncology-monitor-group-b-browser-test-*.docx
+          name: news-monitor-report-group-b
+          path: reports/gi-oncology-monitor-group-b-*.docx
           if-no-files-found: ignore
 
       - name: Commit monitor state
