@@ -187,6 +187,9 @@ def scan_company(company: base.CompanyConfig, config: base.MonitorConfig, start_
         pages_checked += 1
         discovery_pages_checked += 1
 
+        if base.EXACT_URLS_ONLY and base.looks_like_article_url(url):
+            collect_finding(url, page_text)
+
         if (
             browser_discovery_runs < BROWSER_DISCOVERY_LIMIT
             and supports_browser_discovery(url)
@@ -222,9 +225,10 @@ def scan_company(company: base.CompanyConfig, config: base.MonitorConfig, start_
         article_pages_checked += 1
         collect_finding(url, page_text)
 
-        for link in base.extract_links(url, page_text, roots):
-            if base.looks_like_article_url(link):
-                enqueue_article(link)
+        if not base.EXACT_URLS_ONLY:
+            for link in base.extract_links(url, page_text, roots):
+                if base.looks_like_article_url(link):
+                    enqueue_article(link)
 
     unavailable_reason = None
     if not fetch_success:
