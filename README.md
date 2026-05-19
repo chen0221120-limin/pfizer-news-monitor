@@ -26,12 +26,16 @@ Recommended local entry points:
 - `run_group_a.bat`
 - `run_group_b.bat`
 - `run_all_groups.bat`
+- `refresh_github_scan_config.bat`
+- `run_streamlit_app.bat`
+- `run_local_web_monitor.bat`
 
 What each file does:
 
 - `run_group_a.bat`: scans the first half of companies
 - `run_group_b.bat`: scans the second half of companies
 - `run_all_groups.bat`: runs group A first, then group B
+- `refresh_github_scan_config.bat`: rebuilds the GitHub scan config from the latest local Excel and refreshes the bundled fallback config used by GitHub Actions
 
 You can also run the Python script directly:
 
@@ -46,6 +50,64 @@ Generated Word reports are written to:
 reports/
 ```
 
+## Local Web UI
+
+For a friendlier local interface, a Streamlit page is included:
+
+```text
+streamlit_app.py
+run_streamlit_app.bat
+```
+
+What it supports:
+
+- run all companies in one report
+- run only Group A or Group B
+- run only selected companies
+- choose whether to enable browser-assisted mode
+- download the generated Word report directly from the page
+
+First-time setup on a local computer:
+
+```bash
+python -m pip install -r requirements-streamlit.txt
+```
+
+Then launch:
+
+```bash
+run_streamlit_app.bat
+```
+
+Or from a terminal:
+
+```bash
+python -m streamlit run streamlit_app.py
+```
+
+## Local Folder Package UI
+
+If you prefer a lighter local package without Streamlit, a built-in local web launcher is also included:
+
+```text
+local_web_monitor.py
+run_local_web_monitor.bat
+webui/index.html
+```
+
+How it works:
+
+- double-click `run_local_web_monitor.bat`
+- Python starts a local service
+- your browser opens automatically
+- click buttons on the page to run:
+  - all companies
+  - Group A
+  - Group B
+  - only selected companies
+
+This mode uses only Python standard-library web serving for the UI layer. It still calls the existing monitor scripts to generate the final Word report.
+
 ## GitHub Trigger
 
 The workflows are manual-only.
@@ -56,6 +118,40 @@ Open GitHub Actions and run both workflows when you want a full scan:
 - `GI Monitor Group B`
 
 The company list is split automatically into 2 stable groups, so the same master configuration can be scanned in two smaller runs instead of one large run.
+
+## Updating Excel And Syncing GitHub Scan Config
+
+GitHub Actions cannot read Excel files that only exist on your local computer.
+
+After you update this local Excel file:
+
+```text
+outputs/gi_competitors_extraction_updated.xlsx
+```
+
+run:
+
+```text
+refresh_github_scan_config.bat
+```
+
+This will automatically:
+
+- rebuild `config/gi_monitor_config.generated.json`
+- refresh `config/gi_monitor_config.generated.json.gz.b64`
+
+For GitHub Actions, the key file is:
+
+```text
+config/gi_monitor_config.generated.json.gz.b64
+```
+
+After the BAT file finishes, sync that file to GitHub by either:
+
+- committing and pushing it with Git, or
+- replacing the file directly in the GitHub web UI
+
+Once GitHub has the updated `.gz.b64` file, the `GI Monitor Group A` and `GI Monitor Group B` workflows will use the new scan configuration automatically.
 
 ## Scan Logic
 
