@@ -712,6 +712,9 @@ def scan_company(company: CompanyConfig, config: MonitorConfig, start_date: date
         pages_checked += 1
         discovery_pages_checked += 1
 
+        if EXACT_URLS_ONLY and looks_like_article_url(url):
+            collect_finding(url, page_text)
+
         for link in extract_links(url, page_text, roots):
             if looks_like_article_url(link):
                 enqueue_article(link)
@@ -737,9 +740,10 @@ def scan_company(company: CompanyConfig, config: MonitorConfig, start_date: date
         article_pages_checked += 1
         collect_finding(url, page_text)
 
-        for link in extract_links(url, page_text, roots):
-            if looks_like_article_url(link):
-                enqueue_article(link)
+        if not EXACT_URLS_ONLY:
+            for link in extract_links(url, page_text, roots):
+                if looks_like_article_url(link):
+                    enqueue_article(link)
 
     unavailable_reason = None
     if not fetch_success:
