@@ -13,8 +13,6 @@ import re
 from collections import OrderedDict
 from pathlib import Path
 
-from openpyxl import load_workbook
-
 
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE_XLSX = ROOT / "outputs" / "gi_competitors_extraction_updated.xlsx"
@@ -61,6 +59,8 @@ def load_base_terms() -> dict:
 
 
 def build_company_rows() -> list[dict]:
+    from openpyxl import load_workbook
+
     wb = load_workbook(SOURCE_XLSX, read_only=True, data_only=True)
     ws = wb.worksheets[0]
     rows = ws.iter_rows(values_only=True)
@@ -117,7 +117,22 @@ def build_company_rows() -> list[dict]:
     return list(companies.values())
 
 
+def reuse_existing_generated_config() -> bool:
+    if OUTPUT_CONFIG.exists():
+        print(f"Excel file not found, reusing existing generated config: {OUTPUT_CONFIG}")
+        return True
+    return False
+
+
 def main() -> None:
+    if not SOURCE_XLSX.exists():
+        if reuse_existing_generated_config():
+            return
+        raise FileNotFoundError(
+            f"Excel source file not found: {SOURCE_XLSX}. "
+            f"Please commit the workbook or provide {OUTPUT_CONFIG} first."
+        )
+
     config = {
         **load_base_terms(),
         "companies": build_company_rows(),
