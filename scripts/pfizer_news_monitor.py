@@ -807,14 +807,12 @@ def build_document_xml(
     scanned_without_hits = [result for result in results if company_scanned_without_hits(result)]
     hit_companies = len([result for result in results if company_has_hits(result)])
     body = [
-        paragraph_xml("GI肿瘤竞品研发动态监测报告", "Title"),
+        paragraph_xml("GI肿瘤竞品公司动态监测报告", "Title"),
         paragraph_xml(f"扫描时间：{label}", "Subtitle"),
         paragraph_xml(f"扫描范围：{start_date.isoformat()} 至 {end_date.isoformat()}（近3天）", "Subtitle"),
         paragraph_xml(f"监测公司数：{len(results)}"),
         paragraph_xml(f"命中动态数：{len(findings)}"),
         paragraph_xml(f"命中公司数：{hit_companies}"),
-        paragraph_xml(f"已扫描但近3天未命中公司数：{len(scanned_without_hits)}"),
-        paragraph_xml(f"官网不可访问或未读到内容的公司数：{len(unavailable)}"),
     ]
 
     rel_index = 2
@@ -840,16 +838,17 @@ def build_document_xml(
             )
             rel_index += 1
     else:
-        body.append(paragraph_xml("近3天未发现命中已关注产品或目标疾病条件的官网动态。", "Heading1"))
+        body.append(paragraph_xml("本次扫描近3天内未发现命中动态。", "Heading1"))
+        body.append(paragraph_xml("如后续出现命中，正文将展示发布日期、新闻标题、命中原因、命中监测行、命中片段和网页地址。"))
 
     if scanned_without_hits:
-        body.append(paragraph_xml("已扫描但近3天未命中", "Heading1"))
+        body.append(paragraph_xml("附录A：已扫描但近3天未命中", "Subtitle"))
         for result in scanned_without_hits:
             urls = "；".join(result.official_urls) if result.official_urls else "未配置"
             body.append(paragraph_xml(f"{result.company}：已检查 {result.pages_checked} 个页面，近3天未命中符合条件的信息。监控页：{urls}"))
 
     if unavailable:
-        body.append(paragraph_xml("官网不可访问或未读到内容", "Heading1"))
+        body.append(paragraph_xml("附录B：官网不可访问或未读到内容", "Subtitle"))
         for result in unavailable:
             urls = "；".join(result.official_urls) if result.official_urls else "未配置"
             body.append(paragraph_xml(f"{result.company}：{result.unavailable_reason}。监控页：{urls}"))
