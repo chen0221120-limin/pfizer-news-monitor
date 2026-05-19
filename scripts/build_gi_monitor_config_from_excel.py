@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import re
+import base64
+import gzip
 from collections import OrderedDict
 from pathlib import Path
 
@@ -18,6 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SOURCE_XLSX = ROOT / "outputs" / "gi_competitors_extraction_updated.xlsx"
 BASE_CONFIG = ROOT / "config" / "gi_monitor_config.json"
 OUTPUT_CONFIG = ROOT / "config" / "gi_monitor_config.generated.json"
+BUNDLED_CONFIG = ROOT / "config" / "gi_monitor_config.generated.json.gz.b64"
 
 # Expected worksheet layout in the first sheet:
 # 0 company, 1 disease, 2 target, 3 product, 4 trial id, 5 CN url, 6 global url
@@ -118,6 +121,13 @@ def build_company_rows() -> list[dict]:
 
 
 def reuse_existing_generated_config() -> bool:
+    if BUNDLED_CONFIG.exists():
+        payload = BUNDLED_CONFIG.read_text(encoding="ascii").strip()
+        if payload:
+            decoded = gzip.decompress(base64.b64decode(payload)).decode("utf-8")
+            OUTPUT_CONFIG.write_text(decoded, encoding="utf-8")
+            print(f"Excel file not found, restored generated config from bundle: {BUNDLED_CONFIG}")
+            return True
     if OUTPUT_CONFIG.exists():
         print(f"Excel file not found, reusing existing generated config: {OUTPUT_CONFIG}")
         return True
