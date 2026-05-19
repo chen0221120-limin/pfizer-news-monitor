@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Monitor GI oncology competitor websites and generate a Word report."""
+"""Monitor configured GI oncology pages and generate a Word report."""
 
 from __future__ import annotations
 
@@ -37,6 +37,7 @@ MAX_ARTICLE_PAGES_PER_COMPANY = int(os.getenv("MAX_ARTICLE_PAGES_PER_COMPANY", "
 MAX_LINKS_FROM_PAGE = int(os.getenv("MAX_LINKS_FROM_PAGE", "24"))
 MAX_WORKERS = int(os.getenv("MAX_WORKERS", "10"))
 DISCOVERY_QUEUE_LIMIT = int(os.getenv("DISCOVERY_QUEUE_LIMIT", "120"))
+EXACT_URLS_ONLY = os.getenv("EXACT_URLS_ONLY", "false").lower() in {"1", "true", "yes"}
 
 LINK_HINTS = (
     "news",
@@ -55,7 +56,8 @@ LINK_HINTS = (
     "pancreatic",
     "biliary",
     "esophageal",
-    "hcc",
+    "hepatocellular",
+    "liver",
     "research",
     "development",
 )
@@ -109,6 +111,30 @@ SKIP_FILE_EXTENSIONS = (
     ".pptx",
 )
 
+DISEASE_KEYWORD_MAP: dict[str, tuple[str, ...]] = {
+    "结直肠癌": ("结直肠癌", "colorectal cancer", "colorectal", "crc", "colon cancer", "rectal cancer"),
+    "胃癌": ("胃癌", "gastric cancer", "gastric", "stomach cancer", "gastroesophageal cancer"),
+    "胰腺导管腺癌": ("胰腺导管腺癌", "pancreatic ductal adenocarcinoma", "pdac", "pancreatic cancer"),
+    "胆道癌": ("胆道癌", "biliary tract cancer", "btc", "cholangiocarcinoma", "biliary cancer"),
+    "食管癌": ("食管癌", "esophageal cancer", "oesophageal cancer", "esophageal"),
+    "肝细胞癌": ("肝细胞癌", "hepatocellular carcinoma", "hcc", "liver cancer"),
+    "肝癌": ("肝癌", "hepatocellular carcinoma", "hcc", "liver cancer"),
+}
+
+PRODUCT_KEYWORD_MAP: dict[str, tuple[str, ...]] = {
+    "图卡替尼": ("图卡替尼", "tucatinib"),
+    "赛沃替尼": ("赛沃替尼", "savolitinib"),
+    "西奥罗尼": ("西奥罗尼", "chiauranib"),
+}
+
+
+@dataclass(frozen=True)
+class WatchItem:
+    disease: str = ""
+    target: str = ""
+    product: str = ""
+    trial_id: str = ""
+
 
 @dataclass(frozen=True)
 class CompanyConfig:
@@ -118,6 +144,7 @@ class CompanyConfig:
     targets: tuple[str, ...]
     products: tuple[str, ...]
     trial_ids: tuple[str, ...]
+    watch_items: tuple[WatchItem, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -139,21 +166,9 @@ class Finding:
     matched_targets: list[str] = field(default_factory=list)
     matched_trials: list[str] = field(default_factory=list)
     matched_context: list[str] = field(default_factory=list)
+    matched_watch_items: list[str] = field(default_factory=list)
     reason: str = ""
     evidence: str = ""
-
-
-@dataclass(frozen=True)
-class TextBlock:
-    text: str
-    tag: str
-    url: str | None = None
-
-
-@dataclass(frozen=True)
-class DiscoveredLink:
-    url: str
-    score: int
 
 
 @dataclass
@@ -165,6 +180,18 @@ class CompanyScanResult:
     unavailable_reason: str | None = None
 
 
+def company_has_hits(result: CompanyScanResult) -> bool:
+    return bool(result.findings)
+
+
+def company_unavailable(result: CompanyScanResult) -> bool:
+    return result.unavailable_reason is not None
+
+
+def company_scanned_without_hits(result: CompanyScanResult) -> bool:
+    return result.pages_checked > 0 and not result.findings and result.unavailable_reason is None
+
+
 def bjt_now() -> datetime:
     return datetime.now(ZoneInfo("Asia/Shanghai"))
 
@@ -173,19 +200,53 @@ def scan_time_label() -> str:
     return bjt_now().strftime("%Y-%m-%d %H:%M:%S CST")
 
 
-def normalize_space(value: str) -> str:
+def normalize_space(value: object) -> str:
     return " ".join(html.unescape(str(value or "")).replace("\xa0", " ").split())
 
 
-def normalize_token(value: str) -> str:
-    value = normalize_space(value)
-    value = value.replace("＋", "+").replace("／", "/").replace("（", "(").replace("）", ")")
-    return value.strip(" ,;|")
+def normalize_token(value: object) -> str:
+    return normalize_space(value).strip(" ,;|")
+
+
+def disease_keywords(value: str) -> list[str]:
+    normalized = normalize_token(value)
+    if not normalized:
+        return []
+    mapped = DISEASE_KEYWORD_MAP.get(normalized)
+    if mapped:
+        return [normalize_token(item) for item in mapped if normalize_token(item)]
+    return [normalized]
+
+
+def product_keywords(value: str) -> list[str]:
+    normalized = normalize_token(value)
+    if not normalized:
+        return []
+    out: list[str] = []
+    for part in re.split(r"[|/;+；，、\s]+", normalized):
+        token = normalize_token(part)
+        if token and token not in out:
+            out.append(token)
+    for mapped in PRODUCT_KEYWORD_MAP.get(normalized, ()): 
+        token = normalize_token(mapped)
+        if token and token not in out:
+            out.append(token)
+    return out
+
+
+def keywords_from(values: tuple[str, ...]) -> list[str]:
+    out: list[str] = []
+    for value in values:
+        for part in re.split(r"[;|,，、\s]+", str(value)):
+            token = normalize_token(part)
+            if len(token) >= 2 and token not in out:
+                out.append(token)
+    return out
 
 
 def load_config(path: Path) -> MonitorConfig:
     raw = json.loads(path.read_text(encoding="utf-8"))
-    companies = []
+    companies: list[CompanyConfig] = []
     for item in raw.get("companies", []):
         companies.append(
             CompanyConfig(
@@ -195,6 +256,15 @@ def load_config(path: Path) -> MonitorConfig:
                 targets=tuple(item.get("targets", [])),
                 products=tuple(item.get("products", [])),
                 trial_ids=tuple(item.get("trial_ids", [])),
+                watch_items=tuple(
+                    WatchItem(
+                        disease=normalize_space(watch.get("disease", "")),
+                        target=normalize_space(watch.get("target", "")),
+                        product=normalize_space(watch.get("product", "")),
+                        trial_id=normalize_space(watch.get("trial_id", "")),
+                    )
+                    for watch in item.get("watch_items", [])
+                ),
             )
         )
     return MonitorConfig(
@@ -206,11 +276,7 @@ def load_config(path: Path) -> MonitorConfig:
     )
 
 
-def slice_companies(
-    config: MonitorConfig,
-    group_count: int,
-    group_index: int,
-) -> MonitorConfig:
+def slice_companies(config: MonitorConfig, group_count: int, group_index: int) -> MonitorConfig:
     if group_count <= 1:
         return config
     if group_index < 1 or group_index > group_count:
@@ -227,10 +293,7 @@ def fetch_text(url: str, timeout: int = DEFAULT_TIMEOUT, retries: int = DEFAULT_
     request = Request(
         url,
         headers={
-            "User-Agent": (
-                "Mozilla/5.0 (compatible; GIOncologyMonitor/2.0; "
-                "+https://github.com/actions)"
-            ),
+            "User-Agent": "Mozilla/5.0 (compatible; GIOncologyMonitor/3.0; +https://github.com/actions)",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Encoding": "identity",
         },
@@ -240,13 +303,12 @@ def fetch_text(url: str, timeout: int = DEFAULT_TIMEOUT, retries: int = DEFAULT_
         try:
             with urlopen(request, timeout=timeout) as response:
                 charset = response.headers.get_content_charset() or "utf-8"
-                raw = response.read()
-                return raw.decode(charset, errors="replace")
+                return response.read().decode(charset, errors="replace")
         except http.client.IncompleteRead as exc:
             if exc.partial:
                 return exc.partial.decode("utf-8", errors="replace")
             last_error = exc
-        except (HTTPError, OSError, URLError) as exc:
+        except (HTTPError, URLError, OSError) as exc:
             last_error = exc
         if attempt < retries:
             time.sleep(attempt)
@@ -262,6 +324,17 @@ def normalize_url(base_url: str, href: str) -> str:
     return parsed._replace(query="", fragment="").geturl()
 
 
+def root_urls(urls: tuple[str, ...]) -> tuple[str, ...]:
+    roots: list[str] = []
+    for url in urls:
+        parsed = urlparse(url)
+        if parsed.scheme and parsed.netloc:
+            root = f"{parsed.scheme}://{parsed.netloc}/"
+            if root not in roots:
+                roots.append(root)
+    return tuple(roots)
+
+
 def same_site_or_subsite(candidate: str, roots: tuple[str, ...]) -> bool:
     candidate_host = urlparse(candidate).netloc.lower()
     for root in roots:
@@ -271,21 +344,14 @@ def same_site_or_subsite(candidate: str, roots: tuple[str, ...]) -> bool:
     return False
 
 
-def likely_useful_link(url: str) -> bool:
-    path = urlparse(url).path.lower()
-    return any(hint in path for hint in LINK_HINTS)
-
-
 def has_skippable_extension(url: str) -> bool:
     path = urlparse(url).path.lower()
-    return any(path.endswith(extension) for extension in SKIP_FILE_EXTENSIONS)
+    return any(path.endswith(ext) for ext in SKIP_FILE_EXTENSIONS)
 
 
 def path_depth(url: str) -> int:
-    path = urlparse(url).path.strip("/")
-    if not path:
-        return 0
-    return len([part for part in path.split("/") if part])
+    parts = [part for part in urlparse(url).path.split("/") if part]
+    return len(parts)
 
 
 def looks_like_article_url(url: str) -> bool:
@@ -300,7 +366,7 @@ def looks_like_article_url(url: str) -> bool:
         return True
     if any(hint in path for hint in LINK_HINTS) and path_depth(url) >= 2:
         return True
-    return path_depth(url) >= 3 and any(char.isdigit() for char in path)
+    return path_depth(url) >= 3 and any(ch.isdigit() for ch in path)
 
 
 def score_discovered_link(url: str, anchor_text: str) -> int:
@@ -313,10 +379,8 @@ def score_discovered_link(url: str, anchor_text: str) -> int:
         score -= 20
     if any(hint in path for hint in HIGH_PRIORITY_PATH_HINTS):
         score += 8
-    if likely_useful_link(url):
-        score += 6
     if looks_like_article_url(url):
-        score += 8
+        score += 10
     if any(hint in text for hint in LINK_HINTS):
         score += 4
     if parse_date_text(anchor_text):
@@ -325,98 +389,60 @@ def score_discovered_link(url: str, anchor_text: str) -> int:
     return score
 
 
-def prioritize_urls(urls: list[str]) -> list[str]:
-    seen: set[str] = set()
-    ranked: list[tuple[int, int, str]] = []
-    for index, url in enumerate(urls):
-        if not url or url in seen or has_skippable_extension(url):
-            continue
-        seen.add(url)
-        score = score_discovered_link(url, "")
-        if looks_like_article_url(url):
-            score += 10
-        ranked.append((-score, index, url))
-    ranked.sort()
-    return [url for _, _, url in ranked]
-
-
 class LinkParser(HTMLParser):
     def __init__(self, base_url: str, roots: tuple[str, ...]) -> None:
         super().__init__(convert_charrefs=True)
         self.base_url = base_url
         self.roots = roots
         self.links: dict[str, int] = {}
-        self._current_href: str | None = None
-        self._current_text: list[str] = []
+        self._href: str | None = None
+        self._text: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag.lower() != "a":
             return
         href = dict(attrs).get("href")
         if href:
-            self._current_href = href
-            self._current_text = []
+            self._href = href
+            self._text = []
 
     def handle_data(self, data: str) -> None:
-        if self._current_href is not None:
-            self._current_text.append(data)
+        if self._href is not None:
+            self._text.append(data)
 
     def handle_endtag(self, tag: str) -> None:
-        if tag.lower() != "a" or self._current_href is None:
+        if tag.lower() != "a" or self._href is None:
             return
-        url = normalize_url(self.base_url, self._current_href)
-        text = normalize_space(" ".join(self._current_text))
+        url = normalize_url(self.base_url, self._href)
+        text = normalize_space(" ".join(self._text))
         if url and same_site_or_subsite(url, self.roots):
             score = score_discovered_link(url, text)
-            if score > 0:
-                current = self.links.get(url, 0)
-                if score > current:
-                    self.links[url] = score
-        self._current_href = None
+            if score > self.links.get(url, -999):
+                self.links[url] = score
+        self._href = None
+        self._text = []
 
 
-class TextBlockParser(HTMLParser):
-    BLOCK_TAGS = {"a", "h1", "h2", "h3", "h4", "p", "li", "time"}
+def extract_links(page_url: str, page_text: str, roots: tuple[str, ...]) -> list[str]:
+    parser = LinkParser(page_url, roots)
+    parser.feed(page_text)
+    ranked = sorted(parser.links.items(), key=lambda item: (-item[1], item[0]))
+    return [url for url, score in ranked if score > 0][:MAX_LINKS_FROM_PAGE]
 
-    def __init__(self, base_url: str, roots: tuple[str, ...]) -> None:
+
+class TextExtractor(HTMLParser):
+    def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
-        self.base_url = base_url
-        self.roots = roots
-        self.blocks: list[TextBlock] = []
-        self._stack: list[tuple[str, str | None, list[str]]] = []
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        tag = tag.lower()
-        if tag not in self.BLOCK_TAGS:
-            return
-        href = dict(attrs).get("href") if tag == "a" else None
-        url = normalize_url(self.base_url, href) if href else None
-        self._stack.append((tag, url, []))
+        self.parts: list[str] = []
 
     def handle_data(self, data: str) -> None:
-        if self._stack:
-            self._stack[-1][2].append(data)
-
-    def handle_endtag(self, tag: str) -> None:
-        tag = tag.lower()
-        if not self._stack:
-            return
-        current_tag, url, pieces = self._stack[-1]
-        if tag != current_tag:
-            return
-        self._stack.pop()
-        text = normalize_space(" ".join(pieces))
-        if len(text) < 8:
-            return
-        if url and not same_site_or_subsite(url, self.roots):
-            url = None
-        self.blocks.append(TextBlock(text=text, tag=current_tag, url=url))
+        self.parts.append(data)
 
 
 def strip_tags(value: str) -> str:
-    value = re.sub(r"(?is)<script.*?</script>|<style.*?</style>", " ", value)
-    value = re.sub(r"(?s)<[^>]+>", " ", value)
-    return normalize_space(value)
+    parser = TextExtractor()
+    parser.feed(re.sub(r"(?is)<script.*?</script>|<style.*?</style>", " ", value))
+    return normalize_space(" ".join(parser.parts))
 
 
 def extract_title_from_page(page_text: str, fallback_url: str) -> str:
@@ -433,14 +459,14 @@ def extract_title_from_page(page_text: str, fallback_url: str) -> str:
             if title:
                 return title
     slug = urlparse(fallback_url).path.rstrip("/").rsplit("/", 1)[-1]
-    return normalize_space(slug.replace("-", " ").replace("_", " "))
+    return normalize_space(slug.replace("-", " ").replace("_", " ")) or fallback_url
 
 
 def parse_date_text(value: str | None) -> date | None:
     if not value:
         return None
-    text = normalize_space(value).strip(" ,.-")
-    date_patterns = (
+    text = normalize_space(value)
+    patterns = (
         ("%Y-%m-%d", r"(?<!\d)(\d{4}-\d{2}-\d{2})(?!\d)"),
         ("%Y/%m/%d", r"(?<!\d)(\d{4}/\d{2}/\d{2})(?!\d)"),
         ("%m.%d.%Y", r"(?<!\d)(\d{2}\.\d{2}\.\d{4})(?!\d)"),
@@ -448,7 +474,7 @@ def parse_date_text(value: str | None) -> date | None:
         ("%B %d, %Y", r"(?<!\w)([A-Za-z]+\s+\d{1,2},\s+\d{4})(?!\w)"),
         ("%Y%m%d", r"(?<!\d)(\d{8})(?!\d)"),
     )
-    for fmt, pattern in date_patterns:
+    for fmt, pattern in patterns:
         match = re.search(pattern, text, flags=re.IGNORECASE)
         if not match:
             continue
@@ -465,11 +491,10 @@ def extract_date_from_page(page_text: str) -> date | None:
         r'<meta[^>]+name=["\']publishdate["\'][^>]+content=["\']([^"\']+)["\']',
         r'<meta[^>]+name=["\']date["\'][^>]+content=["\']([^"\']+)["\']',
         r'<time[^>]+datetime=["\']([^"\']+)["\']',
-        r"(?i)published[^<]{0,80}(\d{1,2}\s+[A-Za-z]+\s+\d{4})",
-        r"(?i)date[^<]{0,80}(\d{4}-\d{2}-\d{2})",
         r"(\d{4}-\d{2}-\d{2})",
         r"(\d{4}/\d{2}/\d{2})",
         r"([A-Za-z]+\s+\d{1,2},\s+\d{4})",
+        r"(\d{1,2}\s+[A-Za-z]+\s+\d{4})",
     )
     for pattern in patterns:
         match = re.search(pattern, page_text, flags=re.IGNORECASE | re.DOTALL)
@@ -480,101 +505,105 @@ def extract_date_from_page(page_text: str) -> date | None:
     return None
 
 
-def keywords_from(values: tuple[str, ...]) -> list[str]:
-    out: list[str] = []
+def append_unique(items: list[str], values: list[str]) -> None:
     for value in values:
-        for part in re.split(r"[;|,，、]\s*", str(value)):
-            part = normalize_token(part)
-            if len(part) >= 2 and part not in out:
-                out.append(part)
-    return out
+        if value and value not in items:
+            items.append(value)
 
 
 def find_keyword_hits(text: str, keywords: list[str]) -> list[str]:
     lower = text.lower()
-    hits = []
+    hits: list[str] = []
     for keyword in keywords:
         if keyword and keyword.lower() in lower and keyword not in hits:
             hits.append(keyword)
     return hits
 
 
-def extract_text_blocks(page_text: str, page_url: str, roots: tuple[str, ...]) -> list[TextBlock]:
-    parser = TextBlockParser(page_url, roots)
-    parser.feed(page_text)
-    return parser.blocks
+def watch_item_label(item: WatchItem) -> str:
+    parts = [part for part in (item.disease, item.product, item.trial_id) if part]
+    return " | ".join(parts)
 
 
-def score_title_block(
-    block: TextBlock,
-    product_keywords: list[str],
-    trial_keywords: list[str],
-    target_keywords: list[str],
-    disease_keywords: list[str],
-    event_terms: tuple[str, ...],
-) -> int:
-    text = block.text
-    product_hits = find_keyword_hits(text, product_keywords)
-    trial_hits = find_keyword_hits(text, trial_keywords)
-    target_hits = find_keyword_hits(text, target_keywords)
-    disease_hits = find_keyword_hits(text, disease_keywords)
-    event_hits = find_keyword_hits(text, list(event_terms))
-    score = 0
-    score += 40 if product_hits else 0
-    score += 40 if trial_hits else 0
-    score += 18 if target_hits else 0
-    score += 12 if disease_hits else 0
-    score += 10 if event_hits else 0
-    score += 5 if parse_date_text(text) else 0
-    score += 8 if block.tag in {"a", "h1", "h2", "h3", "h4"} else 0
-    score += 8 if block.url else 0
-    if len(text) > 260:
-        score -= 12
-    if len(text) > 500:
-        score -= 25
-    return score
+def match_company_watch_items(company: CompanyConfig, combined_text: str) -> dict[str, list[str]] | None:
+    product_hits_all: list[str] = []
+    trial_hits_all: list[str] = []
+    disease_hits_all: list[str] = []
+    watch_item_hits: list[str] = []
+    reasons: list[str] = []
 
-
-def best_report_title(
-    company: CompanyConfig,
-    page_text: str,
-    page_url: str,
-    config: MonitorConfig,
-    fallback_title: str,
-) -> tuple[str, str, str]:
-    product_keywords = keywords_from(company.products)
-    trial_keywords = keywords_from(company.trial_ids)
-    target_keywords = keywords_from(company.targets)
-    disease_keywords = keywords_from(company.diseases) + list(config.gi_context_terms)
-    roots = root_urls(company.official_urls)
-    candidates = extract_text_blocks(page_text, page_url, roots)
-    if not candidates:
-        return fallback_title, page_url, ""
-
-    best_block: TextBlock | None = None
-    best_score = 0
-    for block in candidates:
-        score = score_title_block(
-            block,
-            product_keywords,
-            trial_keywords,
-            target_keywords,
-            disease_keywords,
-            config.event_terms,
+    watch_items = company.watch_items
+    if not watch_items:
+        watch_items = tuple(
+            WatchItem(disease=d, product=p, trial_id=tr)
+            for d in (company.diseases or ("",))
+            for p in (company.products or ("",))
+            for tr in (company.trial_ids or ("",))
         )
-        if score > best_score:
-            best_score = score
-            best_block = block
 
-    if best_block is None or best_score < 18:
-        return fallback_title, page_url, ""
+    for item in watch_items:
+        trial_hits = find_keyword_hits(combined_text, keywords_from((item.trial_id,))) if item.trial_id else []
+        product_hits = find_keyword_hits(combined_text, product_keywords(item.product)) if item.product else []
+        disease_hits = find_keyword_hits(combined_text, disease_keywords(item.disease)) if item.disease else []
+        target_hits = find_keyword_hits(combined_text, keywords_from((item.target,))) if item.target else []
 
-    title = best_block.text
-    if len(title) > 220:
-        title = title[:217].rstrip() + "..."
-    report_url = best_block.url or page_url
-    evidence = best_block.text if len(best_block.text) <= 320 else best_block.text[:317].rstrip() + "..."
-    return title, report_url, evidence
+        trial_match = bool(trial_hits)
+        disease_product_match = bool(disease_hits and product_hits)
+        if not trial_match and not disease_product_match:
+            continue
+
+        append_unique(product_hits_all, product_hits)
+        append_unique(trial_hits_all, trial_hits)
+        append_unique(disease_hits_all, disease_hits)
+        append_unique(product_hits_all, target_hits)
+
+        label = watch_item_label(item)
+        if label and label not in watch_item_hits:
+            watch_item_hits.append(label)
+        if trial_match and "Matched trial ID" not in reasons:
+            reasons.append("Matched trial ID")
+        if disease_product_match and "Matched disease + drug from one watch row" not in reasons:
+            reasons.append("Matched disease + drug from one watch row")
+
+    if not reasons:
+        return None
+
+    return {
+        "products": product_hits_all,
+        "targets": [],
+        "trials": trial_hits_all,
+        "diseases": disease_hits_all,
+        "context": disease_hits_all,
+        "watch_items": watch_item_hits,
+        "reasons": reasons,
+    }
+
+
+def build_finding(
+    company: CompanyConfig,
+    title: str,
+    source_url: str,
+    published_on: date,
+    combined_text: str,
+    config: MonitorConfig,
+    evidence: str = "",
+) -> Finding | None:
+    match_info = match_company_watch_items(company, combined_text)
+    if match_info is None:
+        return None
+    return Finding(
+        company=company.company,
+        title=title,
+        url=source_url,
+        published_on=published_on,
+        matched_products=match_info["products"][:8],
+        matched_targets=match_info["targets"][:8],
+        matched_trials=match_info["trials"][:8],
+        matched_context=match_info["context"][:8],
+        matched_watch_items=match_info["watch_items"][:8],
+        evidence=evidence,
+        reason="; ".join(match_info["reasons"]),
+    )
 
 
 def is_in_scan_window(published_on: date, start_date: date, end_date: date) -> bool:
@@ -596,76 +625,23 @@ def evaluate_page(
     title = extract_title_from_page(page_text, page_url)
     plain_text = strip_tags(page_text)
     combined = f"{title}\n{plain_text}"
-
-    product_hits = find_keyword_hits(combined, keywords_from(company.products))
-    trial_hits = find_keyword_hits(combined, keywords_from(company.trial_ids))
-    target_hits = find_keyword_hits(combined, keywords_from(company.targets))
-    disease_hits = find_keyword_hits(combined, keywords_from(company.diseases) + list(config.gi_context_terms))
-    event_hits = find_keyword_hits(combined, list(config.event_terms))
-
-    product_or_trial_hit = bool(product_hits or trial_hits)
-    new_target_gi_clinical_hit = bool(target_hits and disease_hits and event_hits)
-    if not product_or_trial_hit and not new_target_gi_clinical_hit:
-        return None
-
-    report_title, report_url, evidence = best_report_title(company, page_text, page_url, config, title)
-
-    reason_parts = []
-    if product_or_trial_hit:
-        reason_parts.append("命中已关注产品/临床试验")
-    if new_target_gi_clinical_hit:
-        reason_parts.append("命中GI肿瘤相关靶点和临床/R&D事件")
-
-    return Finding(
-        company=company.company,
-        title=report_title,
-        url=report_url,
-        published_on=published_on,
-        matched_products=product_hits[:8],
-        matched_targets=target_hits[:8],
-        matched_trials=trial_hits[:6],
-        matched_context=(disease_hits + event_hits)[:10],
-        evidence=evidence,
-        reason="；".join(reason_parts),
-    )
-
-
-def root_urls(urls: tuple[str, ...]) -> tuple[str, ...]:
-    roots = []
-    for url in urls:
-        parsed = urlparse(url)
-        if parsed.scheme and parsed.netloc:
-            root = f"{parsed.scheme}://{parsed.netloc}/"
-            if root not in roots:
-                roots.append(root)
-    return tuple(roots)
+    evidence = plain_text[:320].strip() if plain_text else title
+    return build_finding(company, title, page_url, published_on, combined, config, evidence)
 
 
 def candidate_urls(company: CompanyConfig, config: MonitorConfig) -> list[str]:
-    urls: list[str] = []
-    high_priority: list[str] = []
-    low_priority: list[str] = []
-    roots = root_urls(company.official_urls)
+    seeds: list[str] = []
     for url in company.official_urls:
-        if url and url not in urls:
-            urls.append(url)
-    for root in roots:
-        for path in config.common_paths:
-            candidate = urljoin(root, path.lstrip("/"))
-            bucket = high_priority if any(hint in candidate.lower() for hint in HIGH_PRIORITY_PATH_HINTS) else low_priority
-            if candidate not in urls and candidate not in high_priority and candidate not in low_priority:
-                bucket.append(candidate)
-        sitemap = urljoin(root, "sitemap.xml")
-        if sitemap not in urls and sitemap not in high_priority and sitemap not in low_priority:
-            high_priority.append(sitemap)
-    return urls + prioritize_urls(high_priority) + prioritize_urls(low_priority)
-
-
-def extract_links(page_url: str, page_text: str, roots: tuple[str, ...]) -> list[str]:
-    parser = LinkParser(page_url, roots)
-    parser.feed(page_text)
-    ranked = sorted(parser.links.items(), key=lambda item: (-item[1], item[0]))
-    return [url for url, _ in ranked[:MAX_LINKS_FROM_PAGE]]
+        normalized = normalize_space(url)
+        if normalized and normalized not in seeds:
+            seeds.append(normalized)
+    if not EXACT_URLS_ONLY:
+        for root in root_urls(company.official_urls):
+            for path in config.common_paths:
+                candidate = normalize_space(urljoin(root, path))
+                if candidate and candidate not in seeds:
+                    seeds.append(candidate)
+    return seeds
 
 
 def scan_company(company: CompanyConfig, config: MonitorConfig, start_date: date, end_date: date) -> CompanyScanResult:
@@ -735,12 +711,11 @@ def scan_company(company: CompanyConfig, config: MonitorConfig, start_date: date
         fetch_success = True
         pages_checked += 1
         discovery_pages_checked += 1
-        collect_finding(url, page_text)
 
         for link in extract_links(url, page_text, roots):
             if looks_like_article_url(link):
                 enqueue_article(link)
-            else:
+            elif not EXACT_URLS_ONLY:
                 enqueue_discovery(link)
 
     while (
@@ -784,7 +759,6 @@ def scan_all(config: MonitorConfig, max_workers: int) -> tuple[list[Finding], li
     end_date = bjt_now().date()
     start_date = end_date - timedelta(days=max(config.scan_days - 1, 0))
     results: list[CompanyScanResult] = []
-
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = [
             executor.submit(scan_company, company, config, start_date, end_date)
@@ -792,7 +766,6 @@ def scan_all(config: MonitorConfig, max_workers: int) -> tuple[list[Finding], li
         ]
         for future in concurrent.futures.as_completed(futures):
             results.append(future.result())
-
     results.sort(key=lambda item: item.company.lower())
     findings = [finding for result in results for finding in result.findings]
     findings.sort(key=lambda item: (item.company.lower(), -item.published_on.toordinal(), item.title.lower()))
@@ -801,25 +774,17 @@ def scan_all(config: MonitorConfig, max_workers: int) -> tuple[list[Finding], li
 
 def paragraph_xml(text: str, style: str | None = None) -> str:
     style_xml = f'<w:pPr><w:pStyle w:val="{style}"/></w:pPr>' if style else ""
-    return (
-        "<w:p>"
-        f"{style_xml}"
-        '<w:r><w:t xml:space="preserve">'
-        f"{escape(text)}"
-        "</w:t></w:r>"
-        "</w:p>"
-    )
+    return f"<w:p>{style_xml}<w:r><w:t xml:space=\"preserve\">{escape(text)}</w:t></w:r></w:p>"
 
 
 def hyperlink_paragraph_xml(label: str, url: str, rel_id: str) -> str:
     return (
         "<w:p>"
-        f'<w:r><w:t xml:space="preserve">{escape(label)}：</w:t></w:r>'
-        f'<w:hyperlink r:id="{rel_id}" w:history="1">'
-        '<w:r><w:rPr><w:rStyle w:val="Hyperlink"/></w:rPr>'
-        f'<w:t xml:space="preserve">{escape(url)}</w:t>'
-        "</w:r></w:hyperlink>"
-        "</w:p>"
+        f"<w:r><w:t xml:space=\"preserve\">{escape(label)}：</w:t></w:r>"
+        f"<w:hyperlink r:id=\"{rel_id}\" w:history=\"1\">"
+        "<w:r><w:rPr><w:rStyle w:val=\"Hyperlink\"/></w:rPr>"
+        f"<w:t xml:space=\"preserve\">{escape(url)}</w:t>"
+        "</w:r></w:hyperlink></w:p>"
     )
 
 
@@ -834,13 +799,18 @@ def build_document_xml(
     start_date: date,
     end_date: date,
 ) -> str:
-    unavailable = [result for result in results if result.unavailable_reason]
+    unavailable = [result for result in results if company_unavailable(result)]
+    scanned_without_hits = [result for result in results if company_scanned_without_hits(result)]
+    hit_companies = len([result for result in results if company_has_hits(result)])
     body = [
         paragraph_xml("GI肿瘤竞品研发动态监测报告", "Title"),
         paragraph_xml(f"扫描时间：{label}", "Subtitle"),
         paragraph_xml(f"扫描范围：{start_date.isoformat()} 至 {end_date.isoformat()}（近3天）", "Subtitle"),
         paragraph_xml(f"监测公司数：{len(results)}"),
         paragraph_xml(f"命中动态数：{len(findings)}"),
+        paragraph_xml(f"命中公司数：{hit_companies}"),
+        paragraph_xml(f"已扫描但近3天未命中公司数：{len(scanned_without_hits)}"),
+        paragraph_xml(f"官网不可访问或未读到内容的公司数：{len(unavailable)}"),
     ]
 
     rel_index = 2
@@ -853,25 +823,32 @@ def build_document_xml(
             body.extend(
                 [
                     paragraph_xml(f"发布日期：{finding.published_on.isoformat()}"),
-                    paragraph_xml(f"新闻标题/命中条目：{finding.title}"),
+                    paragraph_xml(f"新闻标题：{finding.title or '未提取到明确标题'}"),
                     paragraph_xml(f"命中原因：{finding.reason}"),
                     paragraph_xml(f"命中产品：{format_list(finding.matched_products)}"),
                     paragraph_xml(f"命中靶点：{format_list(finding.matched_targets)}"),
                     paragraph_xml(f"命中试验编号：{format_list(finding.matched_trials)}"),
                     paragraph_xml(f"相关上下文：{format_list(finding.matched_context)}"),
+                    paragraph_xml(f"命中监测行：{format_list(finding.matched_watch_items)}"),
                     paragraph_xml(f"命中片段：{finding.evidence or finding.title}"),
                     hyperlink_paragraph_xml("网页地址", finding.url, f"rId{rel_index}"),
                 ]
             )
             rel_index += 1
     else:
-        body.append(paragraph_xml("近3天未发现命中已关注产品或GI肿瘤相关靶点的新官网动态。", "Heading1"))
+        body.append(paragraph_xml("近3天未发现命中已关注产品或目标疾病条件的官网动态。", "Heading1"))
+
+    if scanned_without_hits:
+        body.append(paragraph_xml("已扫描但近3天未命中", "Heading1"))
+        for result in scanned_without_hits:
+            urls = "；".join(result.official_urls) if result.official_urls else "未配置"
+            body.append(paragraph_xml(f"{result.company}：已检查 {result.pages_checked} 个页面，近3天未命中符合条件的信息。监控页：{urls}"))
 
     if unavailable:
-        body.append(paragraph_xml("未找到可读取官网内容的公司", "Heading1"))
+        body.append(paragraph_xml("官网不可访问或未读到内容", "Heading1"))
         for result in unavailable:
             urls = "；".join(result.official_urls) if result.official_urls else "未配置"
-            body.append(paragraph_xml(f"{result.company}：{result.unavailable_reason}。官网：{urls}"))
+            body.append(paragraph_xml(f"{result.company}：{result.unavailable_reason}。监控页：{urls}"))
 
     return f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -889,15 +866,11 @@ def build_document_xml(
 
 def build_relationships_xml(findings: list[Finding]) -> str:
     relationships = [
-        '<Relationship Id="rId1" '
-        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" '
-        'Target="styles.xml"/>'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'
     ]
     for index, finding in enumerate(findings, start=2):
         relationships.append(
-            f'<Relationship Id="rId{index}" '
-            'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" '
-            f'Target="{escape(finding.url)}" TargetMode="External"/>'
+            f'<Relationship Id="rId{index}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="{escape(finding.url)}" TargetMode="External"/>'
         )
     return f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
@@ -991,17 +964,17 @@ def save_state(path: Path, findings: list[Finding], results: list[CompanyScanRes
 
 
 def print_summary(findings: list[Finding], results: list[CompanyScanResult], start_date: date, end_date: date) -> None:
-    unavailable = [result for result in results if result.unavailable_reason]
+    unavailable = [result for result in results if company_unavailable(result)]
+    scanned_without_hits = [result for result in results if company_scanned_without_hits(result)]
+    hit_companies = len([result for result in results if company_has_hits(result)])
     checked_pages = sum(result.pages_checked for result in results)
     print(f"Scan window: {start_date.isoformat()} to {end_date.isoformat()}")
     print(f"Companies configured: {len(results)}")
     print(f"Pages checked: {checked_pages}")
     print(f"Matched findings: {len(findings)}")
+    print(f"Companies with hits: {hit_companies}")
+    print(f"Companies scanned with no hit: {len(scanned_without_hits)}")
     print(f"Companies without readable official content: {len(unavailable)}")
-    for finding in findings[:50]:
-        print(f"- {finding.company} | {finding.published_on.isoformat()} | {finding.title} | {finding.url}")
-    if len(findings) > 50:
-        print(f"... {len(findings) - 50} more finding(s)")
 
 
 def main() -> int:
@@ -1010,7 +983,7 @@ def main() -> int:
     parser.add_argument("--state", type=Path, default=STATE_PATH)
     parser.add_argument("--output-dir", type=Path, default=REPORT_DIR)
     parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--max-workers", type=int, default=int(os.getenv("MAX_WORKERS", MAX_WORKERS)))
+    parser.add_argument("--max-workers", type=int, default=int(os.getenv("MAX_WORKERS", str(MAX_WORKERS))))
     parser.add_argument("--company-group-count", type=int, default=int(os.getenv("COMPANY_GROUP_COUNT", "1")))
     parser.add_argument("--company-group-index", type=int, default=int(os.getenv("COMPANY_GROUP_INDEX", "1")))
     parser.add_argument("--report-prefix", default=os.getenv("REPORT_PREFIX_OVERRIDE", REPORT_PREFIX))
@@ -1020,7 +993,6 @@ def main() -> int:
     config = slice_companies(config, max(args.company_group_count, 1), args.company_group_index)
     end_date = bjt_now().date()
     start_date = end_date - timedelta(days=max(config.scan_days - 1, 0))
-
     findings, results = scan_all(config, max_workers=max(args.max_workers, 1))
     label = scan_time_label()
     print_summary(findings, results, start_date, end_date)
