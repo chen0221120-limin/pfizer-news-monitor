@@ -112,19 +112,20 @@ SKIP_FILE_EXTENSIONS = (
 )
 
 DISEASE_KEYWORD_MAP: dict[str, tuple[str, ...]] = {
-    "结直肠癌": ("结直肠癌", "colorectal cancer", "colorectal", "crc", "colon cancer", "rectal cancer"),
-    "胃癌": ("胃癌", "gastric cancer", "gastric", "stomach cancer", "gastroesophageal cancer"),
-    "胰腺导管腺癌": ("胰腺导管腺癌", "pancreatic ductal adenocarcinoma", "pdac", "pancreatic cancer"),
-    "胆道癌": ("胆道癌", "biliary tract cancer", "btc", "cholangiocarcinoma", "biliary cancer"),
-    "食管癌": ("食管癌", "esophageal cancer", "oesophageal cancer", "esophageal"),
-    "肝细胞癌": ("肝细胞癌", "hepatocellular carcinoma", "hcc", "liver cancer"),
-    "肝癌": ("肝癌", "hepatocellular carcinoma", "hcc", "liver cancer"),
+    "\u7ed3\u76f4\u80a0\u764c": ("\u7ed3\u76f4\u80a0\u764c", "colorectal cancer", "colorectal", "crc", "colon cancer", "rectal cancer"),
+    "\u80c3\u764c": ("\u80c3\u764c", "gastric cancer", "gastric", "stomach cancer", "gastroesophageal cancer"),
+    "\u80f0\u817a\u5bfc\u7ba1\u817a\u764c": ("\u80f0\u817a\u5bfc\u7ba1\u817a\u764c", "pancreatic ductal adenocarcinoma", "pdac", "pancreatic cancer"),
+    "\u80c6\u9053\u764c": ("\u80c6\u9053\u764c", "biliary tract cancer", "btc", "cholangiocarcinoma", "biliary cancer"),
+    "\u98df\u7ba1\u764c": ("\u98df\u7ba1\u764c", "esophageal cancer", "oesophageal cancer", "esophageal"),
+    "\u809d\u7ec6\u80de\u764c": ("\u809d\u7ec6\u80de\u764c", "hepatocellular carcinoma", "hcc", "liver cancer"),
+    "\u809d\u764c": ("\u809d\u764c", "hepatocellular carcinoma", "hcc", "liver cancer"),
+    "\u80ba\u764c": ("\u80ba\u764c", "lung cancer", "lung", "non-small cell lung cancer", "nsclc", "small cell lung cancer", "sclc"),
 }
 
 PRODUCT_KEYWORD_MAP: dict[str, tuple[str, ...]] = {
-    "图卡替尼": ("图卡替尼", "tucatinib"),
-    "赛沃替尼": ("赛沃替尼", "savolitinib"),
-    "西奥罗尼": ("西奥罗尼", "chiauranib"),
+    "\u56fe\u5361\u66ff\u5c3c": ("\u56fe\u5361\u66ff\u5c3c", "tucatinib"),
+    "\u8d5b\u6c83\u66ff\u5c3c": ("\u8d5b\u6c83\u66ff\u5c3c", "savolitinib"),
+    "\u897f\u5965\u7f57\u5c3c": ("\u897f\u5965\u7f57\u5c3c", "chiauranib"),
 }
 
 
@@ -223,7 +224,7 @@ def product_keywords(value: str) -> list[str]:
     if not normalized:
         return []
     out: list[str] = []
-    for part in re.split(r"[|/;+；，、\s]+", normalized):
+    for part in re.split(r"[|/;+\uff1b\uff0c\u3001\s]+", normalized):
         token = normalize_token(part)
         if token and token not in out:
             out.append(token)
@@ -237,7 +238,7 @@ def product_keywords(value: str) -> list[str]:
 def keywords_from(values: tuple[str, ...]) -> list[str]:
     out: list[str] = []
     for value in values:
-        for part in re.split(r"[;|,，、\s]+", str(value)):
+        for part in re.split(r"[;|,\uff0c\u3001\s]+", str(value)):
             token = normalize_token(part)
             if len(token) >= 2 and token not in out:
                 out.append(token)
@@ -649,7 +650,7 @@ def scan_company(company: CompanyConfig, config: MonitorConfig, start_date: date
         return CompanyScanResult(
             company=company.company,
             official_urls=company.official_urls,
-            unavailable_reason="未配置官网地址",
+            unavailable_reason="\u672a\u914d\u7f6e\u5b98\u7f51\u5730\u5740",
         )
 
     roots = root_urls(company.official_urls)
@@ -747,7 +748,7 @@ def scan_company(company: CompanyConfig, config: MonitorConfig, start_date: date
 
     unavailable_reason = None
     if not fetch_success:
-        unavailable_reason = "官网无法访问，或未找到可读取的官网内容"
+        unavailable_reason = "\u5b98\u7f51\u65e0\u6cd5\u8bbf\u95ee\uff0c\u6216\u672a\u627e\u5230\u53ef\u8bfb\u53d6\u7684\u5b98\u7f51\u5185\u5bb9"
 
     findings.sort(key=lambda item: (item.published_on, item.title.lower()), reverse=True)
     return CompanyScanResult(
@@ -784,7 +785,7 @@ def paragraph_xml(text: str, style: str | None = None) -> str:
 def hyperlink_paragraph_xml(label: str, url: str, rel_id: str) -> str:
     return (
         "<w:p>"
-        f"<w:r><w:t xml:space=\"preserve\">{escape(label)}：</w:t></w:r>"
+        f"<w:r><w:t xml:space=\"preserve\">{escape(label)}\uff1a</w:t></w:r>"
         f"<w:hyperlink r:id=\"{rel_id}\" w:history=\"1\">"
         "<w:r><w:rPr><w:rStyle w:val=\"Hyperlink\"/></w:rPr>"
         f"<w:t xml:space=\"preserve\">{escape(url)}</w:t>"
@@ -792,8 +793,12 @@ def hyperlink_paragraph_xml(label: str, url: str, rel_id: str) -> str:
     )
 
 
+def page_break_xml() -> str:
+    return '<w:p><w:r><w:br w:type="page"/></w:r></w:p>'
+
+
 def format_list(values: list[str]) -> str:
-    return "；".join(values) if values else "未命中"
+    return "\uff1b".join(values) if values else "\u672a\u547d\u4e2d"
 
 
 def build_document_xml(
@@ -807,12 +812,12 @@ def build_document_xml(
     scanned_without_hits = [result for result in results if company_scanned_without_hits(result)]
     hit_companies = len([result for result in results if company_has_hits(result)])
     body = [
-        paragraph_xml("GI肿瘤竞品公司动态监测报告", "Title"),
-        paragraph_xml(f"扫描时间：{label}", "Subtitle"),
-        paragraph_xml(f"扫描范围：{start_date.isoformat()} 至 {end_date.isoformat()}（近3天）", "Subtitle"),
-        paragraph_xml(f"监测公司数：{len(results)}"),
-        paragraph_xml(f"命中动态数：{len(findings)}"),
-        paragraph_xml(f"命中公司数：{hit_companies}"),
+        paragraph_xml("GI\u80bf\u7624\u7ade\u54c1\u516c\u53f8\u52a8\u6001\u76d1\u6d4b\u62a5\u544a", "Title"),
+        paragraph_xml(f"\u626b\u63cf\u65f6\u95f4\uff1a{label}", "Subtitle"),
+        paragraph_xml(f"\u626b\u63cf\u8303\u56f4\uff1a{start_date.isoformat()} \u81f3 {end_date.isoformat()}\uff08\u8fd13\u5929\uff09", "Subtitle"),
+        paragraph_xml(f"\u76d1\u6d4b\u516c\u53f8\u6570\uff1a{len(results)}"),
+        paragraph_xml(f"\u547d\u4e2d\u52a8\u6001\u6570\uff1a{len(findings)}"),
+        paragraph_xml(f"\u547d\u4e2d\u516c\u53f8\u6570\uff1a{hit_companies}"),
     ]
 
     rel_index = 2
@@ -824,34 +829,36 @@ def build_document_xml(
                 body.append(paragraph_xml(current_company, "Heading1"))
             body.extend(
                 [
-                    paragraph_xml(f"发布日期：{finding.published_on.isoformat()}"),
-                    paragraph_xml(f"新闻标题：{finding.title or '未提取到明确标题'}"),
-                    paragraph_xml(f"命中原因：{finding.reason}"),
-                    paragraph_xml(f"命中产品：{format_list(finding.matched_products)}"),
-                    paragraph_xml(f"命中靶点：{format_list(finding.matched_targets)}"),
-                    paragraph_xml(f"命中试验编号：{format_list(finding.matched_trials)}"),
-                    paragraph_xml(f"相关上下文：{format_list(finding.matched_context)}"),
-                    paragraph_xml(f"命中监测行：{format_list(finding.matched_watch_items)}"),
-                    paragraph_xml(f"命中片段：{finding.evidence or finding.title}"),
-                    hyperlink_paragraph_xml("网页地址", finding.url, f"rId{rel_index}"),
+                    paragraph_xml(f"\u53d1\u5e03\u65e5\u671f\uff1a{finding.published_on.isoformat()}"),
+                    paragraph_xml(f"\u65b0\u95fb\u6807\u9898\uff1a{finding.title or '\u672a\u63d0\u53d6\u5230\u660e\u786e\u6807\u9898'}"),
+                    paragraph_xml(f"\u547d\u4e2d\u539f\u56e0\uff1a{finding.reason}"),
+                    paragraph_xml(f"\u547d\u4e2d\u4ea7\u54c1\uff1a{format_list(finding.matched_products)}"),
+                    paragraph_xml(f"\u547d\u4e2d\u9776\u70b9\uff1a{format_list(finding.matched_targets)}"),
+                    paragraph_xml(f"\u547d\u4e2d\u8bd5\u9a8c\u7f16\u53f7\uff1a{format_list(finding.matched_trials)}"),
+                    paragraph_xml(f"\u76f8\u5173\u4e0a\u4e0b\u6587\uff1a{format_list(finding.matched_context)}"),
+                    paragraph_xml(f"\u547d\u4e2d\u76d1\u6d4b\u884c\uff1a{format_list(finding.matched_watch_items)}"),
+                    paragraph_xml(f"\u547d\u4e2d\u7247\u6bb5\uff1a{finding.evidence or finding.title}"),
+                    hyperlink_paragraph_xml("\u7f51\u9875\u5730\u5740", finding.url, f"rId{rel_index}"),
                 ]
             )
             rel_index += 1
     else:
-        body.append(paragraph_xml("本次扫描近3天内未发现命中动态。", "Heading1"))
-        body.append(paragraph_xml("如后续出现命中，正文将展示发布日期、新闻标题、命中原因、命中监测行、命中片段和网页地址。"))
+        body.append(paragraph_xml("\u672c\u6b21\u626b\u63cf\u8fd13\u5929\u5185\u672a\u53d1\u73b0\u547d\u4e2d\u52a8\u6001\u3002", "Heading1"))
+        body.append(paragraph_xml("\u5982\u540e\u7eed\u51fa\u73b0\u547d\u4e2d\uff0c\u6b63\u6587\u5c06\u5c55\u793a\u53d1\u5e03\u65e5\u671f\u3001\u65b0\u95fb\u6807\u9898\u3001\u547d\u4e2d\u539f\u56e0\u3001\u547d\u4e2d\u76d1\u6d4b\u884c\u3001\u547d\u4e2d\u7247\u6bb5\u548c\u7f51\u9875\u5730\u5740\u3002"))
 
     if scanned_without_hits:
-        body.append(paragraph_xml("附录A：已扫描但近3天未命中", "Subtitle"))
+        body.append(page_break_xml())
+        body.append(paragraph_xml("\u9644\u5f55A\uff1a\u5df2\u626b\u63cf\u4f46\u8fd13\u5929\u672a\u547d\u4e2d", "Subtitle"))
         for result in scanned_without_hits:
-            urls = "；".join(result.official_urls) if result.official_urls else "未配置"
-            body.append(paragraph_xml(f"{result.company}：已检查 {result.pages_checked} 个页面，近3天未命中符合条件的信息。监控页：{urls}"))
+            urls = "\uff1b".join(result.official_urls) if result.official_urls else "\u672a\u914d\u7f6e"
+            body.append(paragraph_xml(f"{result.company}\uff1a\u5df2\u68c0\u67e5 {result.pages_checked} \u4e2a\u9875\u9762\uff0c\u8fd13\u5929\u672a\u547d\u4e2d\u7b26\u5408\u6761\u4ef6\u7684\u4fe1\u606f\u3002\u76d1\u63a7\u9875\uff1a{urls}"))
 
     if unavailable:
-        body.append(paragraph_xml("附录B：官网不可访问或未读到内容", "Subtitle"))
+        body.append(page_break_xml())
+        body.append(paragraph_xml("\u9644\u5f55B\uff1a\u5b98\u7f51\u4e0d\u53ef\u8bbf\u95ee\u6216\u672a\u8bfb\u5230\u5185\u5bb9", "Subtitle"))
         for result in unavailable:
-            urls = "；".join(result.official_urls) if result.official_urls else "未配置"
-            body.append(paragraph_xml(f"{result.company}：{result.unavailable_reason}。监控页：{urls}"))
+            urls = "\uff1b".join(result.official_urls) if result.official_urls else "\u672a\u914d\u7f6e"
+            body.append(paragraph_xml(f"{result.company}\uff1a{result.unavailable_reason}\u3002\u76d1\u63a7\u9875\uff1a{urls}"))
 
     return f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
