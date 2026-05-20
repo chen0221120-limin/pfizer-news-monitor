@@ -342,6 +342,32 @@ def clean_report_title(title: str) -> str:
         1,
     )
 
+    candidate_urls_block = '''def candidate_urls(company: CompanyConfig, config: MonitorConfig) -> list[str]:
+    seeds: list[str] = []
+
+    def add_seed(url: str) -> None:
+        normalized = normalize_space(url)
+        if normalized and normalized not in seeds:
+            seeds.append(normalized)
+
+    def add_site_variants(url: str) -> None:
+        parsed = urlparse(url)
+        if parsed.netloc.lower().endswith("henlius.com") and parsed.path == "/News.html":
+            add_seed(f"{parsed.scheme}://{parsed.netloc}/en/News.html")
+
+    for url in company.official_urls:
+        add_seed(url)
+        add_site_variants(url)
+    if not EXACT_URLS_ONLY:
+        for root in root_urls(company.official_urls):
+            for path in config.common_paths:
+                add_seed(urljoin(root, path))
+    return seeds
+
+
+'''
+    text = replace_block(text, "def candidate_urls", "def scan_company", candidate_urls_block)
+
     SCRIPT_PATH.write_text(text, encoding="utf-8", newline="\n")
     print("Runtime report extraction fixes applied.")
     return 0
