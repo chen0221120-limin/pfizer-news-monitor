@@ -50,6 +50,25 @@ def main() -> int:
 '''
     text = replace_block(text, "def disease_keywords", "def product_keywords", disease_block)
 
+    product_block = '''def product_keywords(value: str) -> list[str]:
+    normalized = normalize_token(value)
+    if not normalized:
+        return []
+    out: list[str] = []
+    for part in re.split(r"[|/;+\\uff1b\\uff0c\\u3001\\s]+", normalized):
+        token = normalize_token(part)
+        if token and not re.fullmatch(r"[A-Za-z]{1,2}", token) and token not in out:
+            out.append(token)
+    for mapped in PRODUCT_KEYWORD_MAP.get(normalized, ()):
+        token = normalize_token(mapped)
+        if token and not re.fullmatch(r"[A-Za-z]{1,2}", token) and token not in out:
+            out.append(token)
+    return out
+
+
+'''
+    text = replace_block(text, "def product_keywords", "def keywords_from", product_block)
+
     text = text.replace(
         '        for part in re.split(r"[;|,\\uff0c\\u3001\\s]+", str(value)):\n',
         '        for part in re.split(r"[;|/,\\uff0c\\u3001\\s]+", str(value)):\n',
@@ -214,6 +233,16 @@ def clean_report_title(title: str) -> str:
     return title.strip(" -|") or title
 
 
+def clean_candidate_title(title_hint: str, fallback_url: str) -> str:
+    title = normalize_space(title_hint)
+    title = re.sub(r"^\\d{4}[-/]\\d{2}[-/]\\d{2}\\s*", "", title)
+    title = re.sub(r"^\\d{1,2}\\s+[A-Za-z]+\\s+\\d{4}\\s*", "", title)
+    title = clean_report_title(title)
+    if title:
+        return title[:260]
+    return extract_title_from_page("", fallback_url)
+
+
 '''
         text = replace_block(text, "def extract_title_from_page", "def parse_date_text", title_block)
 
@@ -307,6 +336,30 @@ def clean_report_title(title: str) -> str:
         '        finding = evaluate_page(company, url, page_text, config, start_date, end_date, date_hint, title_hint)\n',
         1,
     )
+    if "def collect_candidate_hint(candidate: ArticleCandidate)" not in text:
+        text = text.replace(
+            '        if finding and finding.url not in finding_urls:\n'
+            '            findings.append(finding)\n'
+            '            finding_urls.add(finding.url)\n'
+            '\n'
+            '    while (\n',
+            '        if finding and finding.url not in finding_urls:\n'
+            '            findings.append(finding)\n'
+            '            finding_urls.add(finding.url)\n'
+            '\n'
+            '    def collect_candidate_hint(candidate: ArticleCandidate) -> None:\n'
+            '        if candidate.date_hint is None or not is_in_scan_window(candidate.date_hint, start_date, end_date):\n'
+            '            return\n'
+            '        title = clean_candidate_title(candidate.title_hint, candidate.url)\n'
+            '        combined_text = f"{title}\\n{candidate.title_hint}"\n'
+            '        finding = build_finding(company, title, candidate.url, candidate.date_hint, combined_text, config, candidate.title_hint)\n'
+            '        if finding and finding.url not in finding_urls:\n'
+            '            findings.append(finding)\n'
+            '            finding_urls.add(finding.url)\n'
+            '\n'
+            '    while (\n',
+            1,
+        )
     text = text.replace(
         '        for link in extract_links(url, page_text, roots):\n'
         '            if looks_like_article_url(link):\n'
@@ -315,6 +368,7 @@ def clean_report_title(title: str) -> str:
         '                enqueue_discovery(link)\n',
         '        for candidate in extract_article_candidates(url, page_text, roots):\n'
         '            enqueue_article(candidate.url, candidate.title_hint, candidate.date_hint)\n'
+        '            collect_candidate_hint(candidate)\n'
         '        if not EXACT_URLS_ONLY:\n'
         '            for link in extract_links(url, page_text, roots):\n'
         '                if looks_like_article_url(link):\n'
