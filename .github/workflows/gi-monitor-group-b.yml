@@ -54,12 +54,12 @@ jobs:
           path: reports/gi-oncology-monitor-group-b-*.docx
           if-no-files-found: ignore
 
-      - name: Commit monitor state
+      - name: Commit monitor state (optional)
+        continue-on-error: true
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch origin "${GITHUB_REF_NAME}"
           git add .state/pfizer_news_seen_group_b.json
           git diff --cached --quiet || git commit -m "Update GI oncology monitor state group B"
-          git pull --rebase --autostash origin "${GITHUB_REF_NAME}"
-          git push
+          git pull --rebase --autostash origin "${GITHUB_REF_NAME}" || true
+          git push || true
