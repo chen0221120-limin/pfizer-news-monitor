@@ -12,7 +12,7 @@ SCRIPT_PATH = Path("scripts/pfizer_news_monitor.py")
 
 def replace_block(text: str, start: str, end: str, replacement: str) -> str:
     pattern = re.compile(rf"{re.escape(start)}.*?(?={re.escape(end)})", re.DOTALL)
-    new_text, count = pattern.subn(replacement, text, count=1)
+    new_text, count = pattern.subn(lambda _match: replacement, text, count=1)
     if count != 1:
         raise RuntimeError(f"Could not replace block starting with {start!r}")
     return new_text
