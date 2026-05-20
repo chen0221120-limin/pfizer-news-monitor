@@ -75,6 +75,24 @@ def main() -> int:
         1,
     )
 
+    if "TEST_DISEASE_KEYWORDS" not in text:
+        text = text.replace(
+            'PRODUCT_KEYWORD_MAP: dict[str, tuple[str, ...]] = {\n'
+            '    "\\u56fe\\u5361\\u66ff\\u5c3c": ("\\u56fe\\u5361\\u66ff\\u5c3c", "tucatinib"),\n'
+            '    "\\u8d5b\\u6c83\\u66ff\\u5c3c": ("\\u8d5b\\u6c83\\u66ff\\u5c3c", "savolitinib"),\n'
+            '    "\\u897f\\u5965\\u7f57\\u5c3c": ("\\u897f\\u5965\\u7f57\\u5c3c", "chiauranib"),\n'
+            '}\n',
+            'PRODUCT_KEYWORD_MAP: dict[str, tuple[str, ...]] = {\n'
+            '    "\\u56fe\\u5361\\u66ff\\u5c3c": ("\\u56fe\\u5361\\u66ff\\u5c3c", "tucatinib"),\n'
+            '    "\\u8d5b\\u6c83\\u66ff\\u5c3c": ("\\u8d5b\\u6c83\\u66ff\\u5c3c", "savolitinib"),\n'
+            '    "\\u897f\\u5965\\u7f57\\u5c3c": ("\\u897f\\u5965\\u7f57\\u5c3c", "chiauranib"),\n'
+            '}\n'
+            '\n'
+            'TEST_DISEASE_KEYWORDS = ("肺癌", "lung cancer", "nsclc", "non-small cell lung cancer", "sclc")\n'
+            'TEST_TARGET_KEYWORDS = ("EGFR-TKI", "EGFR TKI", "EGFR inhibitor", "EGFR")\n',
+            1,
+        )
+
     if "class ArticleCandidate" not in text:
         text = text.replace(
             'class CompanyScanResult:\n'
@@ -421,6 +439,75 @@ def clean_candidate_title(title_hint: str, fallback_url: str) -> str:
 
 '''
     text = replace_block(text, "def candidate_urls", "def scan_company", candidate_urls_block)
+
+    match_block = '''def match_company_watch_items(company: CompanyConfig, combined_text: str) -> dict[str, list[str]] | None:
+    product_hits_all: list[str] = []
+    trial_hits_all: list[str] = []
+    disease_hits_all: list[str] = []
+    target_hits_all: list[str] = []
+    watch_item_hits: list[str] = []
+    reasons: list[str] = []
+
+    watch_items = company.watch_items
+    if not watch_items:
+        watch_items = tuple(
+            WatchItem(disease=d, product=p, trial_id=tr)
+            for d in (company.diseases or ("",))
+            for p in (company.products or ("",))
+            for tr in (company.trial_ids or ("",))
+        )
+
+    for item in watch_items:
+        trial_hits = find_keyword_hits(combined_text, keywords_from((item.trial_id,))) if item.trial_id else []
+        product_hits = find_keyword_hits(combined_text, product_keywords(item.product)) if item.product else []
+        disease_hits = find_keyword_hits(combined_text, disease_keywords(item.disease)) if item.disease else []
+        target_hits = find_keyword_hits(combined_text, keywords_from((item.target,))) if item.target else []
+
+        trial_match = bool(trial_hits)
+        disease_product_match = bool(disease_hits and product_hits)
+        if not trial_match and not disease_product_match:
+            continue
+
+        append_unique(product_hits_all, product_hits)
+        append_unique(trial_hits_all, trial_hits)
+        append_unique(disease_hits_all, disease_hits)
+        append_unique(target_hits_all, target_hits)
+
+        label = watch_item_label(item)
+        if label and label not in watch_item_hits:
+            watch_item_hits.append(label)
+        if trial_match and "Matched trial ID" not in reasons:
+            reasons.append("Matched trial ID")
+        if disease_product_match and "Matched disease + drug from one watch row" not in reasons:
+            reasons.append("Matched disease + drug from one watch row")
+
+    test_disease_hits = find_keyword_hits(combined_text, list(TEST_DISEASE_KEYWORDS))
+    test_target_hits = find_keyword_hits(combined_text, list(TEST_TARGET_KEYWORDS))
+    if test_disease_hits and test_target_hits:
+        append_unique(disease_hits_all, test_disease_hits)
+        append_unique(target_hits_all, test_target_hits)
+        label = "测试条件：肺癌/lung cancer + EGFR-TKI"
+        if label not in watch_item_hits:
+            watch_item_hits.append(label)
+        if "Test match: lung cancer + EGFR-TKI" not in reasons:
+            reasons.append("Test match: lung cancer + EGFR-TKI")
+
+    if not reasons:
+        return None
+
+    return {
+        "products": product_hits_all,
+        "targets": target_hits_all,
+        "trials": trial_hits_all,
+        "diseases": disease_hits_all,
+        "context": disease_hits_all,
+        "watch_items": watch_item_hits,
+        "reasons": reasons,
+    }
+
+
+'''
+    text = replace_block(text, "def match_company_watch_items", "def build_finding", match_block)
 
     SCRIPT_PATH.write_text(text, encoding="utf-8", newline="\n")
     print("Runtime report extraction fixes applied.")
