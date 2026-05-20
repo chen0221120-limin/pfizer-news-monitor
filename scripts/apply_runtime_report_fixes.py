@@ -56,6 +56,79 @@ def main() -> int:
         1,
     )
 
+    if "class ArticleCandidate" not in text:
+        text = text.replace(
+            'class CompanyScanResult:\n'
+            '    company: str\n'
+            '    official_urls: tuple[str, ...]\n'
+            '    pages_checked: int = 0\n'
+            '    findings: list[Finding] = field(default_factory=list)\n'
+            '    unavailable_reason: str | None = None\n',
+            'class CompanyScanResult:\n'
+            '    company: str\n'
+            '    official_urls: tuple[str, ...]\n'
+            '    pages_checked: int = 0\n'
+            '    findings: list[Finding] = field(default_factory=list)\n'
+            '    unavailable_reason: str | None = None\n'
+            '\n'
+            '\n'
+            '@dataclass(frozen=True)\n'
+            'class ArticleCandidate:\n'
+            '    url: str\n'
+            '    title_hint: str = ""\n'
+            '    date_hint: date | None = None\n',
+            1,
+        )
+
+    text = text.replace(
+        '        self.links: dict[str, int] = {}\n'
+        '        self._href: str | None = None\n',
+        '        self.links: dict[str, int] = {}\n'
+        '        self.link_texts: dict[str, str] = {}\n'
+        '        self._href: str | None = None\n',
+        1,
+    )
+    text = text.replace(
+        '            if score > self.links.get(url, -999):\n'
+        '                self.links[url] = score\n'
+        '        self._href = None\n',
+        '            if score > self.links.get(url, -999):\n'
+        '                self.links[url] = score\n'
+        '                self.link_texts[url] = text\n'
+        '        self._href = None\n',
+        1,
+    )
+
+    if "def extract_article_candidates" not in text:
+        candidate_func = '''def extract_article_candidates(page_url: str, page_text: str, roots: tuple[str, ...]) -> list[ArticleCandidate]:
+    parser = LinkParser(page_url, roots)
+    parser.feed(page_text)
+    ranked = sorted(parser.links.items(), key=lambda item: (-item[1], item[0]))
+    candidates: list[ArticleCandidate] = []
+    for url, score in ranked:
+        if score <= 0 or not looks_like_article_url(url):
+            continue
+        title_hint = parser.link_texts.get(url, "")
+        date_hint = parse_date_text(title_hint)
+        if date_hint is None:
+            path_tail = re.escape(urlparse(url).path.rsplit("/", 1)[-1])
+            match = re.search(path_tail, page_text, flags=re.IGNORECASE)
+            if match:
+                start = max(match.start() - 700, 0)
+                end = min(match.end() + 700, len(page_text))
+                context = strip_tags(page_text[start:end])
+                date_hint = parse_date_text(context)
+                if not title_hint:
+                    title_hint = context[:180]
+        candidates.append(ArticleCandidate(url=url, title_hint=title_hint, date_hint=date_hint))
+        if len(candidates) >= MAX_LINKS_FROM_PAGE:
+            break
+    return candidates
+
+
+'''
+        text = text.replace("class TextExtractor(HTMLParser):\n", candidate_func + "class TextExtractor(HTMLParser):\n", 1)
+
     if "def looks_like_listing_url" not in text:
         article_block = '''def looks_like_listing_url(url: str) -> bool:
     path = urlparse(url).path.lower().rstrip("/")
@@ -171,6 +244,90 @@ def clean_report_title(title: str) -> str:
             '        evidence=evidence_snippet(combined_text, evidence_terms, evidence or title),\n',
             1,
         )
+
+    text = text.replace(
+        '    end_date: date,\n'
+        ') -> Finding | None:\n'
+        '    published_on = extract_date_from_page(page_text)\n',
+        '    end_date: date,\n'
+        '    date_hint: date | None = None,\n'
+        '    title_hint: str = "",\n'
+        ') -> Finding | None:\n'
+        '    published_on = extract_date_from_page(page_text) or date_hint\n',
+        1,
+    )
+    text = text.replace(
+        '    title = extract_title_from_page(page_text, page_url)\n'
+        '    plain_text = strip_tags(page_text)\n',
+        '    title = extract_title_from_page(page_text, page_url)\n'
+        '    if title_hint and title.lower() in {"media-news", "news", "media", "press releases", "press release"}:\n'
+        '        title = clean_report_title(title_hint)\n'
+        '    plain_text = strip_tags(page_text)\n',
+        1,
+    )
+    text = text.replace(
+        '    article_queue: deque[str] = deque()\n',
+        '    article_queue: deque[ArticleCandidate] = deque()\n',
+        1,
+    )
+    text = text.replace(
+        '    def enqueue_article(url: str) -> None:\n',
+        '    def enqueue_article(url: str, title_hint: str = "", date_hint: date | None = None) -> None:\n',
+        1,
+    )
+    text = text.replace(
+        '            article_queue.append(url)\n'
+        '            queued_articles.add(url)\n',
+        '            article_queue.append(ArticleCandidate(url=url, title_hint=title_hint, date_hint=date_hint))\n'
+        '            queued_articles.add(url)\n',
+        1,
+    )
+    text = text.replace(
+        '    def collect_finding(url: str, page_text: str) -> None:\n'
+        '        finding = evaluate_page(company, url, page_text, config, start_date, end_date)\n',
+        '    def collect_finding(\n'
+        '        url: str,\n'
+        '        page_text: str,\n'
+        '        date_hint: date | None = None,\n'
+        '        title_hint: str = "",\n'
+        '    ) -> None:\n'
+        '        finding = evaluate_page(company, url, page_text, config, start_date, end_date, date_hint, title_hint)\n',
+        1,
+    )
+    text = text.replace(
+        '        for link in extract_links(url, page_text, roots):\n'
+        '            if looks_like_article_url(link):\n'
+        '                enqueue_article(link)\n'
+        '            elif not EXACT_URLS_ONLY:\n'
+        '                enqueue_discovery(link)\n',
+        '        for candidate in extract_article_candidates(url, page_text, roots):\n'
+        '            enqueue_article(candidate.url, candidate.title_hint, candidate.date_hint)\n'
+        '        if not EXACT_URLS_ONLY:\n'
+        '            for link in extract_links(url, page_text, roots):\n'
+        '                if looks_like_article_url(link):\n'
+        '                    continue\n'
+        '                enqueue_discovery(link)\n',
+        1,
+    )
+    text = text.replace(
+        '        url = article_queue.popleft()\n'
+        '        queued_articles.discard(url)\n',
+        '        candidate = article_queue.popleft()\n'
+        '        url = candidate.url\n'
+        '        queued_articles.discard(url)\n',
+        1,
+    )
+    text = text.replace(
+        '        fetch_success = True\n'
+        '        pages_checked += 1\n'
+        '        article_pages_checked += 1\n'
+        '        collect_finding(url, page_text)\n',
+        '        fetch_success = True\n'
+        '        pages_checked += 1\n'
+        '        article_pages_checked += 1\n'
+        '        collect_finding(url, page_text, candidate.date_hint, candidate.title_hint)\n',
+        1,
+    )
 
     SCRIPT_PATH.write_text(text, encoding="utf-8", newline="\n")
     print("Runtime report extraction fixes applied.")
