@@ -26,6 +26,9 @@ jobs:
       - name: Build config from Excel
         run: python scripts/build_gi_monitor_config_from_excel.py
 
+      - name: Apply report extraction fixes
+        run: python scripts/apply_runtime_report_fixes.py
+
       - name: Scan company group B
         env:
           EXACT_URLS_ONLY: "true"
