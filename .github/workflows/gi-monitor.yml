@@ -1,0 +1,63 @@
+name: GI Monitor
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: python -m pip install openpyxl
+
+      - name: Build config from Excel
+        run: python scripts/build_gi_monitor_config_from_excel.py
+
+      - name: Apply report extraction fixes
+        run: python scripts/apply_runtime_report_fixes.py
+
+      - name: Scan monitored companies
+        env:
+          EXACT_URLS_ONLY: "true"
+          MAX_WORKERS: "10"
+          MAX_PAGES_PER_COMPANY: "12"
+          MAX_ENTRY_PAGES_PER_COMPANY: "6"
+          MAX_ARTICLE_PAGES_PER_COMPANY: "8"
+          MAX_LINKS_FROM_PAGE: "12"
+          REQUEST_TIMEOUT_SECONDS: "6"
+          REQUEST_RETRIES: "1"
+        run: >-
+          python scripts/pfizer_news_monitor.py
+          --config config/gi_monitor_config.generated.json
+          --state .state/pfizer_news_seen.json
+          --report-prefix gi-oncology-monitor
+
+      - name: Upload Word document
+        uses: actions/upload-artifact@v4
+        with:
+          name: news-monitor-report
+          path: reports/gi-oncology-monitor-*.docx
+          if-no-files-found: ignore
+
+      - name: Commit monitor state
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin "${GITHUB_REF_NAME}"
+          git add .state/pfizer_news_seen.json
+          git diff --cached --quiet || git commit -m "Update GI oncology monitor state"
+          git pull --rebase --autostash origin "${GITHUB_REF_NAME}"
+          git push
