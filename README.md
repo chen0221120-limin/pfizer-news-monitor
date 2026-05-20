@@ -23,25 +23,20 @@ This repository is ready to run directly on a company Windows computer that alre
 
 Recommended local entry points:
 
-- `run_group_a.bat`
-- `run_group_b.bat`
-- `run_all_groups.bat`
+- `run_monitor.bat`
 - `refresh_github_scan_config.bat`
 - `run_streamlit_app.bat`
 - `run_local_web_monitor.bat`
 
 What each file does:
 
-- `run_group_a.bat`: scans the first half of companies
-- `run_group_b.bat`: scans the second half of companies
-- `run_all_groups.bat`: runs group A first, then group B
+- `run_monitor.bat`: scans all configured companies in one run
 - `refresh_github_scan_config.bat`: rebuilds the GitHub scan config from the latest local Excel and refreshes the bundled fallback config used by GitHub Actions
 
 You can also run the Python script directly:
 
 ```bash
-python scripts/pfizer_news_monitor.py --company-group-count 2 --company-group-index 1 --state .state/pfizer_news_seen_group_a.json --report-prefix gi-oncology-monitor-group-a
-python scripts/pfizer_news_monitor.py --company-group-count 2 --company-group-index 2 --state .state/pfizer_news_seen_group_b.json --report-prefix gi-oncology-monitor-group-b
+python scripts/pfizer_news_monitor.py --state .state/pfizer_news_seen.json --report-prefix gi-oncology-monitor
 ```
 
 Generated Word reports are written to:
@@ -62,7 +57,6 @@ run_streamlit_app.bat
 What it supports:
 
 - run all companies in one report
-- run only Group A or Group B
 - run only selected companies
 - choose whether to enable browser-assisted mode
 - download the generated Word report directly from the page
@@ -102,22 +96,19 @@ How it works:
 - your browser opens automatically
 - click buttons on the page to run:
   - all companies
-  - Group A
-  - Group B
   - only selected companies
 
 This mode uses only Python standard-library web serving for the UI layer. It still calls the existing monitor scripts to generate the final Word report.
 
 ## GitHub Trigger
 
-The workflows are manual-only.
+The workflow is manual-only.
 
-Open GitHub Actions and run both workflows when you want a full scan:
+Open GitHub Actions and run this workflow when you want a full scan:
 
-- `GI Monitor Group A`
-- `GI Monitor Group B`
+- `GI Monitor`
 
-The company list is split automatically into 2 stable groups, so the same master configuration can be scanned in two smaller runs instead of one large run.
+The workflow scans all configured companies in one run.
 
 ## Updating Excel And Syncing GitHub Scan Config
 
@@ -151,7 +142,7 @@ After the BAT file finishes, sync that file to GitHub by either:
 - committing and pushing it with Git, or
 - replacing the file directly in the GitHub web UI
 
-Once GitHub has the updated `.gz.b64` file, the `GI Monitor Group A` and `GI Monitor Group B` workflows will use the new scan configuration automatically.
+Once GitHub has the updated `.gz.b64` file, the `GI Monitor` workflow will use the new scan configuration automatically.
 
 ## Scan Logic
 
@@ -199,7 +190,7 @@ Example local run:
 set BROWSER_DISCOVERY_ENABLED=true
 set NODE_EXECUTABLE=C:\path\to\node.exe
 set NODE_MODULES_DIR=C:\path\to\node_modules
-python scripts/pfizer_news_monitor_browser_trial.py --company-group-count 2 --company-group-index 1 --state .state/pfizer_news_seen_group_a.json --report-prefix gi-oncology-monitor-group-a-browser-test
+python scripts/pfizer_news_monitor_browser_trial.py --state .state/pfizer_news_seen.json --report-prefix gi-oncology-monitor-browser-test
 ```
 
 Screenshots from this trial mode are written to:
@@ -219,8 +210,7 @@ reports/gi-oncology-monitor-YYYYMMDD-HHMMSS.docx
 Each workflow uploads its file as a GitHub Actions artifact:
 
 ```text
-news-monitor-report-group-a
-news-monitor-report-group-b
+news-monitor-report
 ```
 
 The report includes:
@@ -240,8 +230,7 @@ The report includes:
 The monitor stores the latest scan metadata in:
 
 ```text
-.state/pfizer_news_seen_group_a.json
-.state/pfizer_news_seen_group_b.json
+.state/pfizer_news_seen.json
 ```
 
 ## Local Test
