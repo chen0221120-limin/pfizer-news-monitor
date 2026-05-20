@@ -51,6 +51,18 @@ def split_multi(value: str) -> list[str]:
     return parts
 
 
+def split_terms(value: str) -> list[str]:
+    raw = normalize_text(value)
+    if not raw or raw.upper() == "NA":
+        return []
+    parts: list[str] = []
+    for piece in re.split(r"[|/;；,，、\n]+", raw):
+        item = normalize_text(piece)
+        if item and item.upper() != "NA" and item not in parts:
+            parts.append(item)
+    return parts
+
+
 def load_base_terms() -> dict:
     base = json.loads(BASE_CONFIG.read_text(encoding="utf-8"))
     return {
@@ -98,8 +110,9 @@ def build_company_rows() -> list[dict]:
         )
         for key, idx in scalar_fields:
             value = normalize_text(row[idx] if len(row) > idx else "")
-            if value and value.upper() != "NA" and value not in company[key]:
-                company[key].append(value)
+            for term in split_terms(value):
+                if term not in company[key]:
+                    company[key].append(term)
 
         urls = []
         urls.extend(split_multi(normalize_text(row[CN_URL_COL] if len(row) > CN_URL_COL else "")))
