@@ -1,8 +1,8 @@
 {
-  "last_scan_bjt": "2026-05-20 11:02:18 CST",
+  "last_scan_bjt": "2026-05-20 15:48:49 CST",
   "scan_start_date": "2026-05-18",
   "scan_end_date": "2026-05-20",
   "companies_scanned": 28,
-  "findings": 1,
-  "unavailable_companies": 2
+  "findings": 0,
+  "unavailable_companies": 3
 }
