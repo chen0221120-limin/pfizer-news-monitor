@@ -21,6 +21,41 @@ def replace_block(text: str, start: str, end: str, replacement: str) -> str:
 def main() -> int:
     text = SCRIPT_PATH.read_text(encoding="utf-8")
 
+    text = text.replace(
+        'def normalize_token(value: object) -> str:\n'
+        '    return normalize_space(value).strip(" ,;|")\n',
+        'def normalize_token(value: object) -> str:\n'
+        '    return normalize_space(value).strip(" ,;|/")\n',
+        1,
+    )
+
+    disease_block = '''def disease_keywords(value: str) -> list[str]:
+    normalized = normalize_token(value)
+    if not normalized:
+        return []
+    out: list[str] = []
+    for part in re.split(r"[|/;+\\uff1b\\uff0c\\u3001]+", normalized):
+        token = normalize_token(part)
+        if not token:
+            continue
+        mapped = DISEASE_KEYWORD_MAP.get(token)
+        candidates = mapped if mapped else (token,)
+        for candidate in candidates:
+            candidate_token = normalize_token(candidate)
+            if candidate_token and candidate_token not in out:
+                out.append(candidate_token)
+    return out
+
+
+'''
+    text = replace_block(text, "def disease_keywords", "def product_keywords", disease_block)
+
+    text = text.replace(
+        '        for part in re.split(r"[;|,\\uff0c\\u3001\\s]+", str(value)):\n',
+        '        for part in re.split(r"[;|/,\\uff0c\\u3001\\s]+", str(value)):\n',
+        1,
+    )
+
     if "def looks_like_listing_url" not in text:
         article_block = '''def looks_like_listing_url(url: str) -> bool:
     path = urlparse(url).path.lower().rstrip("/")
@@ -89,7 +124,7 @@ def looks_like_article_url(url: str) -> bool:
 
 def clean_report_title(title: str) -> str:
     title = normalize_space(title)
-    title = re.sub(r"\s*[-|]\s*(Media|News|Press Release|Press Releases)\s*$", "", title, flags=re.IGNORECASE)
+    title = re.sub(r"\\s*[-|]\\s*(Media|News|Press Release|Press Releases)\\s*$", "", title, flags=re.IGNORECASE)
     return title.strip(" -|") or title
 
 
