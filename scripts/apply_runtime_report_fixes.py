@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+"""Apply small runtime fixes before running the monitor in GitHub Actions."""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+
+SCRIPT_PATH = Path("scripts/pfizer_news_monitor.py")
+
+
+def replace_block(text: str, start: str, end: str, replacement: str) -> str:
+    pattern = re.compile(rf"{re.escape(start)}.*?(?={re.escape(end)})", re.DOTALL)
+    new_text, count = pattern.subn(replacement, text, count=1)
+    if count != 1:
+        raise RuntimeError(f"Could not replace block starting with {start!r}")
+    return new_text
+
+
+def main() -> int:
+    text = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    if "def looks_like_listing_url" not in text:
+        article_block = '''def looks_like_listing_url(url: str) -> bool:
+    path = urlparse(url).path.lower().rstrip("/")
+    parts = [part for part in path.split("/") if part]
+    basename = parts[-1] if parts else ""
+    listing_names = {
+        "news",
+        "news.html",
+        "media",
+        "media.html",
+        "press",
+        "press.html",
+        "press-release",
+        "press-release.html",
+        "press-releases",
+        "press-releases.html",
+        "releases",
+        "releases.html",
+        "newsroom",
+        "newsroom.html",
+    }
+    if basename in listing_names:
+        return True
+    return any(path.endswith(suffix) for suffix in ("/media/releases", "/newsroom/releases"))
+
+
+def looks_like_article_url(url: str) -> bool:
+    if has_skippable_extension(url):
+        return False
+    path = urlparse(url).path.lower()
+    if looks_like_listing_url(url):
+        return False
+    if any(hint in path for hint in LOW_VALUE_PATH_HINTS):
+        return False
+    if re.search(r"/20\\d{2}/\\d{1,2}/", path):
+        return True
+    if re.search(r"/20\\d{2}-\\d{2}-\\d{2}", path):
+        return True
+    if re.search(r"(newsdetails|news-detail|news_detail|detail|article|story)[-/]?\\d+", path):
+        return True
+    if any(hint in path for hint in LINK_HINTS) and path_depth(url) >= 2:
+        return True
+    return path_depth(url) >= 3 and any(ch.isdigit() for ch in path)
+
+
+'''
+        text = replace_block(text, "def looks_like_article_url", "def score_discovered_link", article_block)
+
+    if "def clean_report_title" not in text:
+        title_block = '''def extract_title_from_page(page_text: str, fallback_url: str) -> str:
+    patterns = (
+        r'<meta[^>]+property=["\\']og:title["\\'][^>]+content=["\\']([^"\\']+)["\\']',
+        r'<meta[^>]+name=["\\']title["\\'][^>]+content=["\\']([^"\\']+)["\\']',
+        r"<title[^>]*>(.*?)</title>",
+        r"<h1[^>]*>(.*?)</h1>",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, page_text, flags=re.IGNORECASE | re.DOTALL)
+        if match:
+            title = strip_tags(match.group(1)).strip(" -|")
+            if title:
+                return clean_report_title(title)
+    slug = urlparse(fallback_url).path.rstrip("/").rsplit("/", 1)[-1]
+    return clean_report_title(normalize_space(slug.replace("-", " ").replace("_", " ")) or fallback_url)
+
+
+def clean_report_title(title: str) -> str:
+    title = normalize_space(title)
+    title = re.sub(r"\s*[-|]\s*(Media|News|Press Release|Press Releases)\s*$", "", title, flags=re.IGNORECASE)
+    return title.strip(" -|") or title
+
+
+'''
+        text = replace_block(text, "def extract_title_from_page", "def parse_date_text", title_block)
+
+    if "def evidence_snippet" not in text:
+        evidence_func = '''def evidence_snippet(text: str, keywords: list[str], fallback: str) -> str:
+    normalized = normalize_space(text)
+    lower = normalized.lower()
+    positions = [lower.find(keyword.lower()) for keyword in keywords if keyword and keyword.lower() in lower]
+    if not positions:
+        return normalize_space(fallback)[:320]
+    center = max(min(positions) - 120, 0)
+    snippet = normalized[center : center + 360].strip()
+    return snippet or normalize_space(fallback)[:320]
+
+
+'''
+        text = text.replace("def watch_item_label(item: WatchItem) -> str:\n", evidence_func + "def watch_item_label(item: WatchItem) -> str:\n", 1)
+
+        text = text.replace(
+            '    return Finding(\n'
+            '        company=company.company,\n'
+            '        title=title,\n'
+            '        url=source_url,\n'
+            '        published_on=published_on,\n',
+            '    evidence_terms = (\n'
+            '        match_info["products"]\n'
+            '        + match_info["trials"]\n'
+            '        + match_info["diseases"]\n'
+            '        + match_info["context"]\n'
+            '        + match_info["watch_items"]\n'
+            '    )\n'
+            '    return Finding(\n'
+            '        company=company.company,\n'
+            '        title=title,\n'
+            '        url=source_url,\n'
+            '        published_on=published_on,\n',
+            1,
+        )
+        text = text.replace(
+            '        evidence=evidence,\n',
+            '        evidence=evidence_snippet(combined_text, evidence_terms, evidence or title),\n',
+            1,
+        )
+
+    SCRIPT_PATH.write_text(text, encoding="utf-8", newline="\n")
+    print("Runtime report extraction fixes applied.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
