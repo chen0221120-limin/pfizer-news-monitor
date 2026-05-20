@@ -105,6 +105,7 @@ def main() -> int:
     parser.feed(page_text)
     ranked = sorted(parser.links.items(), key=lambda item: (-item[1], item[0]))
     candidates: list[ArticleCandidate] = []
+    seen: set[str] = set()
     for url, score in ranked:
         if score <= 0 or not looks_like_article_url(url):
             continue
@@ -121,6 +122,18 @@ def main() -> int:
                 if not title_hint:
                     title_hint = context[:180]
         candidates.append(ArticleCandidate(url=url, title_hint=title_hint, date_hint=date_hint))
+        seen.add(url)
+        if len(candidates) >= MAX_LINKS_FROM_PAGE:
+            break
+    for match in re.finditer(r"""(?P<href>(?:https?://[^"'<>\\s]+)?/?(?:en/)?NewsDetails-\\d+-\\d+\\.html)""", page_text, flags=re.IGNORECASE):
+        url = normalize_url(page_url, match.group("href"))
+        if not url or url in seen or not same_site_or_subsite(url, roots) or not looks_like_article_url(url):
+            continue
+        start = max(match.start() - 700, 0)
+        end = min(match.end() + 700, len(page_text))
+        context = strip_tags(page_text[start:end])
+        candidates.append(ArticleCandidate(url=url, title_hint=context[:180], date_hint=parse_date_text(context)))
+        seen.add(url)
         if len(candidates) >= MAX_LINKS_FROM_PAGE:
             break
     return candidates
