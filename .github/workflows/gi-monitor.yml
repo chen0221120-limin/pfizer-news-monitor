@@ -29,6 +29,9 @@ jobs:
       - name: Apply report extraction fixes
         run: python scripts/apply_runtime_report_fixes.py
 
+      - name: Apply date parsing fix
+        run: python scripts/apply_date_parsing_fix.py
+
       - name: Scan monitored companies
         env:
           EXACT_URLS_ONLY: "true"
