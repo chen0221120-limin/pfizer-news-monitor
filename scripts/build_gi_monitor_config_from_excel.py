@@ -69,7 +69,7 @@ def load_base_terms() -> dict:
         "scan_days": int(base.get("scan_days", 3)),
         "event_terms": base.get("event_terms", []),
         "gi_context_terms": base.get("gi_context_terms", []),
-        "common_paths": [],
+        "common_paths": base.get("common_paths", []),
     }
 
 
@@ -166,3 +166,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
