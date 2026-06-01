@@ -21,6 +21,42 @@ def replace_block(text: str, start: str, end: str, replacement: str) -> str:
 def main() -> int:
     text = SCRIPT_PATH.read_text(encoding="utf-8")
 
+    link_hints_block = text.split("LINK_HINTS =", 1)[1].split(")", 1)[0] if "LINK_HINTS =" in text else ""
+    if '"publication"' not in link_hints_block:
+        text = text.replace(
+            '    "development",\n)',
+            '    "development",\n'
+            '    "publication",\n'
+            '    "publications",\n'
+            '    "abstract",\n'
+            '    "poster",\n'
+            '    "manuscript",\n'
+            '    "journal",\n'
+            '    "congress",\n'
+            '    "conference",\n'
+            '    "presentation",\n'
+            ')',
+            1,
+        )
+
+    high_priority_block = text.split("HIGH_PRIORITY_PATH_HINTS =", 1)[1].split(")", 1)[0] if "HIGH_PRIORITY_PATH_HINTS =" in text else ""
+    if '"publication"' not in high_priority_block:
+        text = text.replace(
+            '    "oncology",\n)',
+            '    "oncology",\n'
+            '    "publication",\n'
+            '    "publications",\n'
+            '    "abstract",\n'
+            '    "poster",\n'
+            '    "manuscript",\n'
+            '    "journal",\n'
+            '    "congress",\n'
+            '    "conference",\n'
+            '    "presentation",\n'
+            ')',
+            1,
+        )
+
     text = text.replace(
         'def normalize_token(value: object) -> str:\n'
         '    return normalize_space(value).strip(" ,;|")\n',
@@ -59,7 +95,7 @@ def main() -> int:
         token = normalize_token(part)
         if token and not re.fullmatch(r"[A-Za-z]{1,2}", token) and token not in out:
             out.append(token)
-    for mapped in PRODUCT_KEYWORD_MAP.get(normalized, ()):
+    for mapped in PRODUCT_KEYWORD_MAP.get(normalized, ()): 
         token = normalize_token(mapped)
         if token and not re.fullmatch(r"[A-Za-z]{1,2}", token) and token not in out:
             out.append(token)
@@ -67,6 +103,7 @@ def main() -> int:
 
 
 '''
+    product_block = product_block.replace("get(normalized, ()): \n", "get(normalized, ()):\n")
     text = replace_block(text, "def product_keywords", "def keywords_from", product_block)
 
     text = text.replace(
@@ -226,6 +263,37 @@ def looks_like_article_url(url: str) -> bool:
 
 '''
         text = replace_block(text, "def looks_like_article_url", "def score_discovered_link", article_block)
+    if '"publications.html"' not in text:
+        text = text.replace(
+            '        "newsroom.html",\n'
+            '    }\n',
+            '        "newsroom.html",\n'
+            '        "publication",\n'
+            '        "publication.html",\n'
+            '        "publications",\n'
+            '        "publications.html",\n'
+            '        "abstracts",\n'
+            '        "abstracts.html",\n'
+            '        "posters",\n'
+            '        "posters.html",\n'
+            '    }\n',
+            1,
+        )
+    if '"/science/publications"' not in text:
+        text = text.replace(
+            '    return any(path.endswith(suffix) for suffix in ("/media/releases", "/newsroom/releases"))\n',
+            '    return any(\n'
+            '        path.endswith(suffix)\n'
+            '        for suffix in (\n'
+            '            "/media/releases",\n'
+            '            "/newsroom/releases",\n'
+            '            "/science/publications",\n'
+            '            "/research/publications",\n'
+            '            "/our-science/publications",\n'
+            '        )\n'
+            '    )\n',
+            1,
+        )
 
     if "def clean_report_title" not in text:
         title_block = '''def extract_title_from_page(page_text: str, fallback_url: str) -> str:
@@ -263,6 +331,63 @@ def clean_candidate_title(title_hint: str, fallback_url: str) -> str:
 
 '''
         text = replace_block(text, "def extract_title_from_page", "def parse_date_text", title_block)
+
+    date_block = '''def parse_date_text(value: str | None) -> date | None:
+    if not value:
+        return None
+    text = normalize_space(value)
+    chinese_match = re.search(r"(?<!\\d)(\\d{4})\\s*年\\s*(\\d{1,2})\\s*月\\s*(\\d{1,2})\\s*日(?!\\d)", text)
+    if chinese_match:
+        try:
+            return date(
+                int(chinese_match.group(1)),
+                int(chinese_match.group(2)),
+                int(chinese_match.group(3)),
+            )
+        except ValueError:
+            pass
+    patterns = (
+        ("%Y-%m-%d", r"(?<!\\d)(\\d{4}-\\d{2}-\\d{2})(?!\\d)"),
+        ("%Y/%m/%d", r"(?<!\\d)(\\d{4}/\\d{2}/\\d{2})(?!\\d)"),
+        ("%m.%d.%Y", r"(?<!\\d)(\\d{2}\\.\\d{2}\\.\\d{4})(?!\\d)"),
+        ("%d %B %Y", r"(?<!\\d)(\\d{1,2}\\s+[A-Za-z]+\\s+\\d{4})(?!\\d)"),
+        ("%B %d, %Y", r"(?<!\\w)([A-Za-z]+\\s+\\d{1,2},\\s+\\d{4})(?!\\w)"),
+        ("%Y%m%d", r"(?<!\\d)(\\d{8})(?!\\d)"),
+    )
+    for fmt, pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if not match:
+            continue
+        try:
+            return datetime.strptime(match.group(1), fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def extract_date_from_page(page_text: str) -> date | None:
+    patterns = (
+        r"(\\d{4}\\s*年\\s*\\d{1,2}\\s*月\\s*\\d{1,2}\\s*日)",
+        r'<meta[^>]+property=["\\']article:published_time["\\'][^>]+content=["\\']([^"\\']+)["\\']',
+        r'<meta[^>]+name=["\\']publishdate["\\'][^>]+content=["\\']([^"\\']+)["\\']',
+        r'<meta[^>]+name=["\\']date["\\'][^>]+content=["\\']([^"\\']+)["\\']',
+        r'<time[^>]+datetime=["\\']([^"\\']+)["\\']',
+        r"(\\d{4}-\\d{2}-\\d{2})",
+        r"(\\d{4}/\\d{2}/\\d{2})",
+        r"([A-Za-z]+\\s+\\d{1,2},\\s+\\d{4})",
+        r"(\\d{1,2}\\s+[A-Za-z]+\\s+\\d{4})",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, page_text, flags=re.IGNORECASE | re.DOTALL)
+        if match:
+            parsed = parse_date_text(match.group(1))
+            if parsed is not None:
+                return parsed
+    return None
+
+
+'''
+    text = replace_block(text, "def parse_date_text", "def append_unique", date_block)
 
     if "def evidence_snippet" not in text:
         evidence_func = '''def evidence_snippet(text: str, keywords: list[str], fallback: str) -> str:
@@ -430,6 +555,22 @@ def clean_candidate_title(title_hint: str, fallback_url: str) -> str:
     for url in company.official_urls:
         add_seed(url)
         add_site_variants(url)
+    publication_paths = (
+        "/publications",
+        "/publication",
+        "/science/publications",
+        "/research/publications",
+        "/our-science/publications",
+        "/publications-posters",
+        "/science/publications-posters",
+        "/our-science/publications-presentations",
+        "/abstracts",
+        "/posters",
+        "/presentations",
+    )
+    for root in root_urls(company.official_urls):
+        for path in publication_paths:
+            add_seed(urljoin(root, path))
     if not EXACT_URLS_ONLY:
         for root in root_urls(company.official_urls):
             for path in config.common_paths:
