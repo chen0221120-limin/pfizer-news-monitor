@@ -74,23 +74,39 @@ def extract_date_from_page(page_text: str) -> date | None:
     return None
 
 
+def is_publication_like_url(url: str) -> bool:
+    path = urlparse(url).path.lower()
+    return any(term in path for term in ("publication", "poster", "presentation", "abstract", "science"))
+
+
 def wordpress_publications_api_urls(page_url: str) -> list[str]:
     parsed = urlparse(page_url)
     path = parsed.path.lower()
-    if not any(term in path for term in ("publication", "poster", "presentation", "abstract", "science")):
+    if not is_publication_like_url(page_url):
         return []
     root = f"{parsed.scheme}://{parsed.netloc}"
-    rest_bases = (
-        "publications",
-        "publication",
-        "presentations",
-        "presentation",
-        "posters",
-        "poster",
-        "abstracts",
-        "abstract",
-    )
-    return [f"{root}/wp-json/wp/v2/{base}?per_page=100" for base in rest_bases]
+    rest_bases: list[str] = []
+
+    def add_base(value: str) -> None:
+        if value not in rest_bases:
+            rest_bases.append(value)
+
+    if "publication" in path or "science" in path:
+        add_base("publications")
+        add_base("publication")
+    if "presentation" in path:
+        add_base("presentations")
+        add_base("presentation")
+        add_base("publications")
+    if "poster" in path:
+        add_base("posters")
+        add_base("poster")
+        add_base("publications")
+    if "abstract" in path:
+        add_base("abstracts")
+        add_base("abstract")
+        add_base("publications")
+    return [f"{root}/wp-json/wp/v2/{base}?per_page=100" for base in rest_bases[:3]]
 
 
 def list_text(value: object) -> list[str]:
@@ -197,6 +213,48 @@ def extract_publication_api_findings(
 def main() -> int:
     text = SCRIPT_PATH.read_text(encoding="utf-8")
     text = replace_block(text, "def parse_date_text", "def append_unique", DATE_BLOCK)
+    candidate_urls_block = '''def candidate_urls(company: CompanyConfig, config: MonitorConfig) -> list[str]:
+    seeds: list[str] = []
+
+    def add_seed(url: str) -> None:
+        normalized = normalize_space(url)
+        if normalized and normalized not in seeds:
+            seeds.append(normalized)
+
+    def add_site_variants(url: str) -> None:
+        parsed = urlparse(url)
+        if parsed.netloc.lower().endswith("henlius.com") and parsed.path == "/News.html":
+            add_seed(f"{parsed.scheme}://{parsed.netloc}/en/News.html")
+
+    for url in company.official_urls:
+        add_seed(url)
+        add_site_variants(url)
+    if not EXACT_URLS_ONLY:
+        publication_paths = (
+            "/publications",
+            "/publication",
+            "/science/publications",
+            "/research/publications",
+            "/our-science/publications",
+            "/publications-posters",
+            "/science/publications-posters",
+            "/our-science/publications-presentations",
+            "/abstracts",
+            "/posters",
+            "/presentations",
+        )
+        publication_roots = root_urls(tuple(url for url in company.official_urls if is_publication_like_url(url)))
+        for root in publication_roots:
+            for path in publication_paths:
+                add_seed(urljoin(root, path))
+        for root in root_urls(company.official_urls):
+            for path in config.common_paths:
+                add_seed(urljoin(root, path))
+    return seeds
+
+
+'''
+    text = replace_block(text, "def candidate_urls", "def scan_company", candidate_urls_block)
     if "publication_api_checked: set[str] = set()" not in text:
         text = text.replace(
             "    findings: list[Finding] = []\n"
@@ -226,7 +284,8 @@ def main() -> int:
             "        if finding and finding.url not in finding_urls:\n"
             "            findings.append(finding)\n"
             "            finding_urls.add(finding.url)\n\n"
-            "    def collect_publication_api(listing_url: str) -> None:\n"
+            "    def collect_publication_api(listing_url: str) -> bool:\n"
+            "        api_success = False\n"
             "        for api_url in wordpress_publications_api_urls(listing_url):\n"
             "            if api_url in publication_api_checked:\n"
             "                continue\n"
@@ -235,21 +294,23 @@ def main() -> int:
             "                api_text = fetch_text(api_url)\n"
             "            except Exception:\n"
             "                continue\n"
+            "            api_success = True\n"
             "            for finding in extract_publication_api_findings(company, listing_url, api_text, config, start_date, end_date):\n"
             "                if finding.url not in finding_urls:\n"
             "                    findings.append(finding)\n"
-            "                    finding_urls.add(finding.url)\n\n",
+            "                    finding_urls.add(finding.url)\n"
+            "        return api_success\n\n",
             1,
         )
-    if "        collect_publication_api(url)\n\n        if EXACT_URLS_ONLY" not in text:
+    if "        api_success = collect_publication_api(url)\n" not in text:
         text = text.replace(
-            "        pages_checked += 1\n"
-            "        discovery_pages_checked += 1\n\n"
-            "        if EXACT_URLS_ONLY and looks_like_article_url(url):\n",
-            "        pages_checked += 1\n"
-            "        discovery_pages_checked += 1\n"
-            "        collect_publication_api(url)\n\n"
-            "        if EXACT_URLS_ONLY and looks_like_article_url(url):\n",
+            "        seen_urls.add(url)\n"
+            "        try:\n",
+            "        seen_urls.add(url)\n"
+            "        api_success = collect_publication_api(url)\n"
+            "        if api_success:\n"
+            "            fetch_success = True\n"
+            "        try:\n",
             1,
         )
     SCRIPT_PATH.write_text(text, encoding="utf-8", newline="\n")
