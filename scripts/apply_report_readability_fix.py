@@ -31,6 +31,46 @@ def report_value(values: list[str]) -> str:
     return "；".join(values) if values else ""
 
 
+def is_generic_report_title(title: str) -> bool:
+    normalized = normalize_space(title).strip(" -|")
+    if not normalized:
+        return True
+    lower = normalized.lower()
+    generic_terms = (
+        "company news",
+        "news",
+        "newsroom",
+        "press release",
+        "press releases",
+        "media",
+        "media centre",
+        "media center",
+        "公司新闻",
+        "新闻中心",
+        "新闻稿",
+        "媒体中心",
+    )
+    if lower in generic_terms:
+        return True
+    if any(term in lower for term in (" | company news", "| news", "| press release", "| press releases")):
+        return True
+    if any(term in normalized for term in ("| 公司新闻", "| 新闻中心", "| 新闻稿", "| 媒体中心")):
+        return True
+    if any(term in normalized for term in ("公司新闻", "新闻中心", "媒体中心")) and len(normalized) <= 80:
+        return True
+    return False
+
+
+def display_finding_title(finding: Finding) -> str:
+    title = normalize_space(finding.title)
+    if not is_generic_report_title(title):
+        return title
+    evidence = normalize_space(finding.evidence)
+    if evidence and not is_generic_report_title(evidence) and len(evidence) <= 180:
+        return evidence
+    return "未提取到具体新闻标题（列表页命中）"
+
+
 def build_document_xml(
     findings: list[Finding],
     results: list[CompanyScanResult],
@@ -61,7 +101,7 @@ def build_document_xml(
                 body.append(paragraph_xml(current_company, "Heading1"))
             item_number += 1
             source_type = finding_source_type(finding)
-            title = finding.title or "未提取到明确标题"
+            title = display_finding_title(finding)
             body.append(paragraph_xml(f"{item_number}. [{source_type}] {title}", "Heading2"))
             body.append(paragraph_xml(f"发布日期：{finding.published_on.isoformat()}"))
             product_text = report_value(finding.matched_products)
