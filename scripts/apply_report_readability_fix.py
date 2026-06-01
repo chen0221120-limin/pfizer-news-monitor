@@ -115,6 +115,10 @@ def build_document_xml(
 
 def main() -> int:
     text = SCRIPT_PATH.read_text(encoding="utf-8")
+    text = text.replace(
+        '        combined_text = f"{title}\n{candidate.title_hint}"\n',
+        '        combined_text = f"{title}\\\\n{candidate.title_hint}"\n',
+    )
     start = "def finding_source_type" if "def finding_source_type" in text else "def build_document_xml"
     text = replace_block(text, start, "def build_relationships_xml", REPORT_BLOCK)
     SCRIPT_PATH.write_text(text, encoding="utf-8", newline="\n")
