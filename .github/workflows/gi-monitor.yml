@@ -32,6 +32,9 @@ jobs:
       - name: Apply date parsing fix
         run: python scripts/apply_date_parsing_fix.py
 
+      - name: Apply Word report readability fix
+        run: python scripts/apply_report_readability_fix.py
+
       - name: Scan monitored companies
         env:
           EXACT_URLS_ONLY: "true"
