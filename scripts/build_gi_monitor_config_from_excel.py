@@ -22,6 +22,30 @@ BASE_CONFIG = ROOT / "config" / "gi_monitor_config.json"
 OUTPUT_CONFIG = ROOT / "config" / "gi_monitor_config.generated.json"
 BUNDLED_CONFIG = ROOT / "config" / "gi_monitor_config.generated.json.gz.b64"
 
+PUBLICATION_EVENT_TERMS = (
+    "publication",
+    "publications",
+    "published",
+    "abstract",
+    "poster",
+    "manuscript",
+    "journal",
+    "presentation",
+    "presented",
+    "congress",
+    "conference",
+)
+
+PUBLICATION_COMMON_PATHS = (
+    "/publications",
+    "/publication",
+    "/science/publications",
+    "/our-science/publications",
+    "/research/publications",
+    "/abstracts",
+    "/posters",
+)
+
 # Expected worksheet layout in the first sheet:
 # 0 company, 1 disease, 2 target, 3 product, 4 trial id, 5 CN url, 6 global url
 COMPANY_COL = 0
@@ -65,11 +89,19 @@ def split_terms(value: str) -> list[str]:
 
 def load_base_terms() -> dict:
     base = json.loads(BASE_CONFIG.read_text(encoding="utf-8"))
+    event_terms = list(base.get("event_terms", []))
+    common_paths = list(base.get("common_paths", []))
+    for term in PUBLICATION_EVENT_TERMS:
+        if term not in event_terms:
+            event_terms.append(term)
+    for path in PUBLICATION_COMMON_PATHS:
+        if path not in common_paths:
+            common_paths.append(path)
     return {
         "scan_days": int(base.get("scan_days", 3)),
-        "event_terms": base.get("event_terms", []),
+        "event_terms": event_terms,
         "gi_context_terms": base.get("gi_context_terms", []),
-        "common_paths": base.get("common_paths", []),
+        "common_paths": common_paths,
     }
 
 
