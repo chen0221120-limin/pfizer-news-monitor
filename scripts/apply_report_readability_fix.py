@@ -119,6 +119,23 @@ def main() -> int:
         '        combined_text = f"{title}\n{candidate.title_hint}"\n',
         '        combined_text = f"{title}\\\\n{candidate.title_hint}"\n',
     )
+    text = text.replace(
+        "        candidate = article_queue.popleft()\n"
+        "        url = candidate.url\n"
+        "        queued_articles.discard(url)\n"
+        "        if not url or url in seen_urls:\n"
+        "            continue\n"
+        "        seen_urls.add(url)\n",
+        "        candidate = article_queue.popleft()\n"
+        "        url = candidate.url\n"
+        "        queued_articles.discard(url)\n"
+        "        if not url or url in seen_urls:\n"
+        "            continue\n"
+        "        if candidate.date_hint is not None and not is_in_scan_window(candidate.date_hint, start_date, end_date):\n"
+        "            continue\n"
+        "        seen_urls.add(url)\n",
+        1,
+    )
     start = "def finding_source_type" if "def finding_source_type" in text else "def build_document_xml"
     text = replace_block(text, start, "def build_relationships_xml", REPORT_BLOCK)
     SCRIPT_PATH.write_text(text, encoding="utf-8", newline="\n")
