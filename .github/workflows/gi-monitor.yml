@@ -56,11 +56,18 @@ jobs:
           if-no-files-found: ignore
 
       - name: Commit monitor state
+        continue-on-error: true
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin "${GITHUB_REF_NAME}"
+          if ! git pull --rebase --autostash origin "${GITHUB_REF_NAME}"; then
+            echo "::warning::Monitor state could not be rebased; report artifact was already uploaded."
+            exit 0
+          fi
           git add .state/pfizer_news_seen.json
           git diff --cached --quiet || git commit -m "Update GI oncology monitor state"
-          git pull --rebase --autostash origin "${GITHUB_REF_NAME}"
-          git push
+          if ! git push; then
+            echo "::warning::Monitor state push skipped because the remote branch changed; report artifact was already uploaded."
+            exit 0
+          fi
