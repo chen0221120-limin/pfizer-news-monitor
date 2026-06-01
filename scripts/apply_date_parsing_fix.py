@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Apply focused date parsing fixes before running the monitor."""
+"""Apply final runtime patches before running the monitor."""
 
 from __future__ import annotations
 
@@ -18,18 +18,14 @@ def replace_block(text: str, start: str, end: str, replacement: str) -> str:
     return new_text
 
 
-DATE_BLOCK = '''def parse_date_text(value: str | None) -> date | None:
+DATE_AND_PUBLICATION_BLOCK = '''def parse_date_text(value: str | None) -> date | None:
     if not value:
         return None
     text = normalize_space(value)
     chinese_match = re.search(r"(?<!\\d)(\\d{4})\\s*\\u5e74\\s*(\\d{1,2})\\s*\\u6708\\s*(\\d{1,2})\\s*\\u65e5(?!\\d)", text)
     if chinese_match:
         try:
-            return date(
-                int(chinese_match.group(1)),
-                int(chinese_match.group(2)),
-                int(chinese_match.group(3)),
-            )
+            return date(int(chinese_match.group(1)), int(chinese_match.group(2)), int(chinese_match.group(3)))
         except ValueError:
             pass
     patterns = (
@@ -163,16 +159,7 @@ def extract_publication_api_findings(
         if not isinstance(item, dict):
             continue
         acf = item.get("acf") if isinstance(item.get("acf"), dict) else {}
-        date_text = normalize_space(
-            str(
-                acf.get("publication_date")
-                or item.get("post_date")
-                or item.get("post_date_gmt")
-                or item.get("date")
-                or item.get("date_gmt")
-                or ""
-            )
-        )
+        date_text = normalize_space(str(acf.get("publication_date") or item.get("post_date") or item.get("post_date_gmt") or item.get("date") or item.get("date_gmt") or ""))
         published_on = parse_date_text(date_text)
         if published_on is None or not is_in_scan_window(published_on, start_date, end_date):
             continue
@@ -210,10 +197,7 @@ def extract_publication_api_findings(
 '''
 
 
-def main() -> int:
-    text = SCRIPT_PATH.read_text(encoding="utf-8")
-    text = replace_block(text, "def parse_date_text", "def append_unique", DATE_BLOCK)
-    candidate_urls_block = '''def candidate_urls(company: CompanyConfig, config: MonitorConfig) -> list[str]:
+CANDIDATE_URLS_BLOCK = '''def candidate_urls(company: CompanyConfig, config: MonitorConfig) -> list[str]:
     seeds: list[str] = []
 
     def add_seed(url: str) -> None:
@@ -254,7 +238,136 @@ def main() -> int:
 
 
 '''
-    text = replace_block(text, "def candidate_urls", "def scan_company", candidate_urls_block)
+
+
+REPORT_BLOCK = '''def finding_source_type(finding: Finding) -> str:
+    text = f"{finding.url}\\n{finding.evidence}".lower()
+    if any(term in text for term in ("publication", "poster", "abstract", "presentation", ".pdf", "journal", "conference")):
+        return "出版物/会议摘要"
+    if any(term in text for term in ("press", "release", "news")):
+        return "公司新闻/新闻稿"
+    return "网页动态"
+
+
+def build_document_xml(
+    findings: list[Finding],
+    results: list[CompanyScanResult],
+    label: str,
+    start_date: date,
+    end_date: date,
+) -> str:
+    unavailable = [result for result in results if company_unavailable(result)]
+    scanned_without_hits = [result for result in results if company_scanned_without_hits(result)]
+    hit_companies = len([result for result in results if company_has_hits(result)])
+    body = [
+        paragraph_xml("GI肿瘤竞品公司动态监测报告", "Title"),
+        paragraph_xml(f"扫描时间：{label}", "Subtitle"),
+        paragraph_xml(f"扫描范围：{start_date.isoformat()} 至 {end_date.isoformat()}（近3天）", "Subtitle"),
+        paragraph_xml(f"监测公司数：{len(results)}"),
+        paragraph_xml(f"命中动态数：{len(findings)}"),
+        paragraph_xml(f"命中公司数：{hit_companies}"),
+    ]
+
+    rel_index = 2
+    if findings:
+        current_company = None
+        item_number = 0
+        for finding in findings:
+            if finding.company != current_company:
+                current_company = finding.company
+                item_number = 0
+                body.append(paragraph_xml(current_company, "Heading1"))
+            item_number += 1
+            title = finding.title or "未提取到明确标题"
+            body.extend(
+                [
+                    paragraph_xml(f"{item_number}. {title}", "Heading2"),
+                    paragraph_xml(f"条目类型：{finding_source_type(finding)}"),
+                    paragraph_xml(f"发布日期：{finding.published_on.isoformat()}"),
+                    paragraph_xml(f"命中原因：{finding.reason or '命中监测关键词'}"),
+                    paragraph_xml(f"命中产品：{format_list(finding.matched_products)}"),
+                    paragraph_xml(f"命中靶点：{format_list(finding.matched_targets)}"),
+                    paragraph_xml(f"命中试验编号：{format_list(finding.matched_trials)}"),
+                    paragraph_xml(f"关联疾病/上下文：{format_list(finding.matched_context)}"),
+                    paragraph_xml(f"对应Excel监测行：{format_list(finding.matched_watch_items)}"),
+                    paragraph_xml(f"证据摘要：{finding.evidence or title}"),
+                    hyperlink_paragraph_xml("点击打开原文/出版物", finding.url, f"rId{rel_index}"),
+                ]
+            )
+            rel_index += 1
+    else:
+        body.append(paragraph_xml("本次扫描近3天内未发现命中动态。", "Heading1"))
+        body.append(paragraph_xml("如后续出现命中，正文将展示条目标题、类型、发布日期、命中原因、证据摘要和原文链接。"))
+
+    if scanned_without_hits:
+        body.append(page_break_xml())
+        body.append(paragraph_xml("附录A：已扫描但近3天未命中", "Subtitle"))
+        for result in scanned_without_hits:
+            urls = "；".join(result.official_urls) if result.official_urls else "未配置"
+            body.append(paragraph_xml(f"{result.company}：已检查 {result.pages_checked} 个页面，近3天未命中符合条件的信息。监控页：{urls}"))
+
+    if unavailable:
+        body.append(page_break_xml())
+        body.append(paragraph_xml("附录B：官网不可访问或未读到内容", "Subtitle"))
+        for result in unavailable:
+            urls = "；".join(result.official_urls) if result.official_urls else "未配置"
+            body.append(paragraph_xml(f"{result.company}：{result.unavailable_reason}。监控页：{urls}"))
+
+    return f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <w:body>
+    {''.join(body)}
+    <w:sectPr>
+      <w:pgSz w:w="12240" w:h="15840"/>
+      <w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/>
+    </w:sectPr>
+  </w:body>
+</w:document>
+"""
+
+
+'''
+
+
+COLLECT_BLOCK = '''    def collect_candidate_hint(candidate: ArticleCandidate) -> None:
+        if candidate.date_hint is None or not is_in_scan_window(candidate.date_hint, start_date, end_date):
+            return
+        title = clean_candidate_title(candidate.title_hint, candidate.url)
+        combined_text = f"{title}\n{candidate.title_hint}"
+        finding = build_finding(company, title, candidate.url, candidate.date_hint, combined_text, config, candidate.title_hint)
+        if finding and finding.url not in finding_urls:
+            findings.append(finding)
+            finding_urls.add(finding.url)
+
+    def collect_publication_api(listing_url: str) -> bool:
+        api_success = False
+        for api_url in wordpress_publications_api_urls(listing_url):
+            if api_url in publication_api_checked:
+                continue
+            publication_api_checked.add(api_url)
+            try:
+                api_text = fetch_text(api_url)
+            except Exception:
+                continue
+            api_success = True
+            for finding in extract_publication_api_findings(company, listing_url, api_text, config, start_date, end_date):
+                if finding.url not in finding_urls:
+                    findings.append(finding)
+                    finding_urls.add(finding.url)
+        return api_success
+
+'''
+
+
+def main() -> int:
+    text = SCRIPT_PATH.read_text(encoding="utf-8")
+    text = replace_block(text, "def parse_date_text", "def append_unique", DATE_AND_PUBLICATION_BLOCK)
+    text = replace_block(text, "def candidate_urls", "def scan_company", CANDIDATE_URLS_BLOCK)
+    report_start = "def finding_source_type" if "def finding_source_type" in text else "def build_document_xml"
+    text = replace_block(text, report_start, "def build_relationships_xml", REPORT_BLOCK)
+    text = replace_block(text, "    def collect_candidate_hint", "    while (", COLLECT_BLOCK)
+
     if "publication_api_checked: set[str] = set()" not in text:
         text = text.replace(
             "    findings: list[Finding] = []\n"
@@ -262,44 +375,6 @@ def main() -> int:
             "    findings: list[Finding] = []\n"
             "    finding_urls: set[str] = set()\n"
             "    publication_api_checked: set[str] = set()\n",
-            1,
-        )
-    if "def collect_publication_api(listing_url: str) -> None:" not in text:
-        text = text.replace(
-            "    def collect_candidate_hint(candidate: ArticleCandidate) -> None:\n"
-            "        if candidate.date_hint is None or not is_in_scan_window(candidate.date_hint, start_date, end_date):\n"
-            "            return\n"
-            "        title = clean_candidate_title(candidate.title_hint, candidate.url)\n"
-            "        combined_text = f\"{title}\\n{candidate.title_hint}\"\n"
-            "        finding = build_finding(company, title, candidate.url, candidate.date_hint, combined_text, config, candidate.title_hint)\n"
-            "        if finding and finding.url not in finding_urls:\n"
-            "            findings.append(finding)\n"
-            "            finding_urls.add(finding.url)\n\n",
-            "    def collect_candidate_hint(candidate: ArticleCandidate) -> None:\n"
-            "        if candidate.date_hint is None or not is_in_scan_window(candidate.date_hint, start_date, end_date):\n"
-            "            return\n"
-            "        title = clean_candidate_title(candidate.title_hint, candidate.url)\n"
-            "        combined_text = f\"{title}\\n{candidate.title_hint}\"\n"
-            "        finding = build_finding(company, title, candidate.url, candidate.date_hint, combined_text, config, candidate.title_hint)\n"
-            "        if finding and finding.url not in finding_urls:\n"
-            "            findings.append(finding)\n"
-            "            finding_urls.add(finding.url)\n\n"
-            "    def collect_publication_api(listing_url: str) -> bool:\n"
-            "        api_success = False\n"
-            "        for api_url in wordpress_publications_api_urls(listing_url):\n"
-            "            if api_url in publication_api_checked:\n"
-            "                continue\n"
-            "            publication_api_checked.add(api_url)\n"
-            "            try:\n"
-            "                api_text = fetch_text(api_url)\n"
-            "            except Exception:\n"
-            "                continue\n"
-            "            api_success = True\n"
-            "            for finding in extract_publication_api_findings(company, listing_url, api_text, config, start_date, end_date):\n"
-            "                if finding.url not in finding_urls:\n"
-            "                    findings.append(finding)\n"
-            "                    finding_urls.add(finding.url)\n"
-            "        return api_success\n\n",
             1,
         )
     if "        api_success = collect_publication_api(url)\n" not in text:
@@ -313,8 +388,23 @@ def main() -> int:
             "        try:\n",
             1,
         )
+    if '<w:style w:type="paragraph" w:styleId="Heading2">' not in text:
+        text = text.replace(
+            '  <w:style w:type="character" w:styleId="Hyperlink">\n',
+            '  <w:style w:type="paragraph" w:styleId="Heading2">\n'
+            '    <w:name w:val="heading 2"/>\n'
+            '    <w:basedOn w:val="Normal"/>\n'
+            '    <w:next w:val="Normal"/>\n'
+            '    <w:qFormat/>\n'
+            '    <w:pPr><w:outlineLvl w:val="1"/><w:spacing w:before="180" w:after="80"/></w:pPr>\n'
+            '    <w:rPr><w:b/><w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:eastAsia="Microsoft YaHei"/><w:sz w:val="24"/></w:rPr>\n'
+            '  </w:style>\n'
+            '  <w:style w:type="character" w:styleId="Hyperlink">\n',
+            1,
+        )
+
     SCRIPT_PATH.write_text(text, encoding="utf-8", newline="\n")
-    print("Date parsing fix applied.")
+    print("Runtime patches applied.")
     return 0
 
 
